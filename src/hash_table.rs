@@ -1564,12 +1564,16 @@ impl<V> HashTable<V> {
         // SAFETY: All pointer/slice accesses obey table bounds; occupied slots
         // are identified by tags, and corresponding hashes are initialized.
         unsafe {
-            for idx in find_occupied_slots(self.tags_ptr().as_ref()) {
-                let hash = self.hashes_ptr().as_ref()[idx].assume_init_read();
-                let root = self.hopmap_index(hash);
-                let off = idx - root * 16;
-                let n_index = off / 16;
-                hist[n_index] += 1;
+            for bucket in self.hopmap_ptr().as_ref().iter() {
+                let mask = bucket.candidates();
+                if mask != 0 {
+                    hist[mask.count_ones() as usize - 1] += bucket
+                        .neighbors
+                        .iter()
+                        .copied()
+                        .map(|u| u as usize)
+                        .sum::<usize>();
+                }
             }
 
             hist[HOP_RANGE] += self.overflow.len();
