@@ -7,12 +7,12 @@ use core::ptr::NonNull;
 
 #[inline(always)]
 fn target_load_factor(capacity: usize) -> usize {
-    ((capacity as u128 * 99) / 100) as usize
+    (capacity as f32 * 0.98) as usize
 }
 
 #[inline(always)]
 fn target_load_factor_inverse(capacity: usize) -> usize {
-    ((capacity as u128 * 100) / 99) as usize
+    (capacity as f32 / 0.98) as usize
 }
 
 #[inline(always)]
@@ -46,7 +46,7 @@ fn hashtag(tag: u64) -> u8 {
 }
 
 /// Search for a movable index in the bubble range
-///
+///g
 /// # Safety
 /// - `hashes` must point to a slice of `MaybeUninit<u64>` with length strictly
 ///   greater than `empty_idx`.
@@ -1762,7 +1762,7 @@ impl<V> HashTable<V> {
     ///
     /// # Load Factor
     ///
-    /// The table maintains a load factor of approximately 99% before
+    /// The table maintains a load factor of approximately 98% before
     /// triggering a resize operation.
     pub fn capacity(&self) -> usize {
         self.max_pop
