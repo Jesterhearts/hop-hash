@@ -202,6 +202,64 @@ impl DataLayout {
     }
 }
 
+/// Debug statistics for hash table analysis.
+///
+/// Test-only: compiled only with `cfg(test)`.
+#[cfg(test)]
+#[derive(Debug, Clone)]
+pub struct DebugStats {
+    /// Number of elements currently in the table
+    pub populated: usize,
+    /// Maximum load capacity before resize
+    pub capacity: usize,
+    /// Total number of slots allocated
+    pub total_slots: usize,
+    /// Number of slots currently occupied
+    pub occupied_slots: usize,
+    /// Number of entries in overflow storage
+    pub overflow_entries: usize,
+    /// Load factor (populated / capacity)
+    pub load_factor: f64,
+    /// Slot utilization (occupied_slots / total_slots)
+    pub slot_utilization: f64,
+    /// Total memory in bytes used by the table
+    pub total_bytes: usize,
+    /// Estimated wasted memory in bytes
+    pub wasted_bytes: usize,
+}
+
+#[cfg(test)]
+impl DebugStats {
+    /// Pretty-print the debug statistics.
+    #[cfg(feature = "std")]
+    pub fn print(&self) {
+        println!("=== Hash Table Debug Statistics ===");
+        println!(
+            "Population: {}/{} ({:.2}% load factor)",
+            self.populated,
+            self.capacity,
+            self.load_factor * 100.0
+        );
+        println!(
+            "Slot Usage: {}/{} ({:.2}% utilization)",
+            self.occupied_slots,
+            self.total_slots,
+            self.slot_utilization * 100.0
+        );
+        println!("Overflow: {} entries", self.overflow_entries);
+        println!("Total Allocated: {} bytes", self.total_bytes);
+        println!(
+            "Memory: {} bytes wasted ({:.02}%)",
+            self.wasted_bytes,
+            if self.total_bytes == 0 {
+                0.0
+            } else {
+                (self.wasted_bytes as f64 / self.total_bytes as f64) * 100.0
+            }
+        );
+    }
+}
+
 /// A high-performance hash table using 16-way hopscotch hashing.
 ///
 /// `HashTable<V>` stores values of type `V` and provides fast insertion,
@@ -1669,6 +1727,53 @@ impl<V> HashTable<V> {
         hist
     }
 
+    /// Returns detailed performance and utilization statistics for debugging.
+    ///
+    /// Test-only: compiled only with `cfg(test)`.
+    #[cfg(test)]
+    pub fn debug_stats(&self) -> DebugStats {
+        let total_slots = if self.max_root_mask == usize::MAX {
+            0
+        } else {
+            (self.max_root_mask.wrapping_add(1) + HOP_RANGE) * 16
+        };
+
+        let mut occupied_slots = 0;
+
+        if total_slots > 0 {
+            // SAFETY: Valid allocation and bounds checked
+            unsafe {
+                // Count occupied slots
+                for i in 0..total_slots {
+                    if self.is_occupied(i) {
+                        occupied_slots += 1;
+                    }
+                }
+            }
+        }
+
+        DebugStats {
+            populated: self.populated,
+            capacity: self.max_pop,
+            total_slots,
+            occupied_slots,
+            overflow_entries: self.overflow.len(),
+            load_factor: if self.max_pop == 0 {
+                0.0
+            } else {
+                self.populated as f64 / self.max_pop as f64
+            },
+            slot_utilization: if total_slots == 0 {
+                0.0
+            } else {
+                occupied_slots as f64 / total_slots as f64
+            },
+            total_bytes: self.layout.layout.size(),
+            wasted_bytes: (total_slots - occupied_slots)
+                * (core::mem::size_of::<V>() + core::mem::size_of::<u64>()),
+        }
+    }
+
     /// Pretty-prints the probe-length histogram horizontally using stdout.
     ///
     /// Test-only, requires the `std` feature. Produces a horizontal bar chart.
@@ -2897,7 +3002,7 @@ mod tests {
     #[cfg(feature = "std")]
     fn histogram_output() {
         let state = HashState::default();
-        let mut table: HashTable<Item> = HashTable::with_capacity(10000);
+        let mut table: HashTable<Item> = HashTable::with_capacity(100000);
         for k in 0..table.capacity() as u64 {
             let hash = hash_key(&state, k);
             match table.entry(hash, |v| v.key == k) {
@@ -2912,6 +3017,7 @@ mod tests {
         }
 
         table.print_probe_histogram();
+        table.debug_stats().print();
     }
 
     #[test]
