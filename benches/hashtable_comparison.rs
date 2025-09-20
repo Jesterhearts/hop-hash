@@ -9,6 +9,8 @@ use criterion::criterion_main;
 use hashbrown::hash_table::Entry as HashbrownEntry;
 use hashbrown::hash_table::HashTable as HashbrownHashTable;
 use hop_hash::HashTable as HopHashTable;
+use rand::TryRngCore;
+use rand::rngs::OsRng;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct TestItem {
@@ -120,16 +122,10 @@ fn bench_insert_sequential(c: &mut Criterion) {
 fn bench_insert_random(c: &mut Criterion) {
     let mut group = c.benchmark_group("insert_random");
 
+    let mut rng = OsRng;
+
     for size in SIZES.iter() {
-        let random_keys: Vec<u64> = (0..*size)
-            .map(|i| {
-                let mut x = i as u64;
-                x ^= x << 13;
-                x ^= x >> 7;
-                x ^= x << 17;
-                x
-            })
-            .collect();
+        let random_keys: Vec<u64> = (0..*size).map(|_| rng.try_next_u64().unwrap()).collect();
 
         let keys = &random_keys[0..*size];
 

@@ -565,24 +565,32 @@ where
 mod tests {
     use core::hash::BuildHasher;
 
+    use rand::TryRngCore;
+    use rand::rngs::OsRng;
     use siphasher::sip::SipHasher;
 
     use super::*;
 
     #[derive(Clone)]
-    struct SipHashBuilder;
+    struct SipHashBuilder {
+        k1: u64,
+        k2: u64,
+    }
 
     impl BuildHasher for SipHashBuilder {
         type Hasher = SipHasher;
 
         fn build_hasher(&self) -> Self::Hasher {
-            SipHasher::new()
+            SipHasher::new_with_keys(self.k1, self.k2)
         }
     }
 
     impl Default for SipHashBuilder {
         fn default() -> Self {
-            Self
+            Self {
+                k1: OsRng.try_next_u64().unwrap_or(0),
+                k2: OsRng.try_next_u64().unwrap_or(0),
+            }
         }
     }
 
@@ -592,7 +600,7 @@ mod tests {
         assert!(set.is_empty());
         assert_eq!(set.len(), 0);
 
-        let set2 = HashSet::<i32, _>::with_hasher(SipHashBuilder);
+        let set2 = HashSet::<i32, _>::with_hasher(SipHashBuilder::default());
         assert!(set2.is_empty());
         assert_eq!(set2.len(), 0);
     }
@@ -603,14 +611,14 @@ mod tests {
         assert!(set.capacity() >= 100);
         assert!(set.is_empty());
 
-        let set2 = HashSet::<i32, _>::with_capacity_and_hasher(200, SipHashBuilder);
+        let set2 = HashSet::<i32, _>::with_capacity_and_hasher(200, SipHashBuilder::default());
         assert!(set2.capacity() >= 200);
         assert!(set2.is_empty());
     }
 
     #[test]
     fn test_insert_and_contains() {
-        let mut set = HashSet::with_hasher(SipHashBuilder);
+        let mut set = HashSet::with_hasher(SipHashBuilder::default());
 
         assert!(set.insert(1));
         assert_eq!(set.len(), 1);
@@ -630,7 +638,7 @@ mod tests {
 
     #[test]
     fn test_remove() {
-        let mut set = HashSet::with_hasher(SipHashBuilder);
+        let mut set = HashSet::with_hasher(SipHashBuilder::default());
         set.insert(1);
         set.insert(2);
         set.insert(3);
@@ -648,7 +656,7 @@ mod tests {
 
     #[test]
     fn test_take() {
-        let mut set = HashSet::with_hasher(SipHashBuilder);
+        let mut set = HashSet::with_hasher(SipHashBuilder::default());
         set.insert(1);
         set.insert(2);
 
@@ -663,7 +671,7 @@ mod tests {
 
     #[test]
     fn test_get() {
-        let mut set = HashSet::with_hasher(SipHashBuilder);
+        let mut set = HashSet::with_hasher(SipHashBuilder::default());
         set.insert(42);
 
         assert_eq!(set.get(&42), Some(&42));
@@ -672,7 +680,7 @@ mod tests {
 
     #[test]
     fn test_clear() {
-        let mut set = HashSet::with_hasher(SipHashBuilder);
+        let mut set = HashSet::with_hasher(SipHashBuilder::default());
         set.insert(1);
         set.insert(2);
         set.insert(3);
@@ -688,7 +696,7 @@ mod tests {
 
     #[test]
     fn test_reserve() {
-        let mut set = HashSet::<i32, _>::with_hasher(SipHashBuilder);
+        let mut set = HashSet::<i32, _>::with_hasher(SipHashBuilder::default());
         let initial_capacity = set.capacity();
 
         set.reserve(1000);
@@ -697,7 +705,7 @@ mod tests {
 
     #[test]
     fn test_iter() {
-        let mut set = HashSet::with_hasher(SipHashBuilder);
+        let mut set = HashSet::with_hasher(SipHashBuilder::default());
         set.insert(1);
         set.insert(2);
         set.insert(3);
@@ -711,7 +719,7 @@ mod tests {
 
     #[test]
     fn test_into_iterator() {
-        let mut set = HashSet::with_hasher(SipHashBuilder);
+        let mut set = HashSet::with_hasher(SipHashBuilder::default());
         set.insert(1);
         set.insert(2);
         set.insert(3);
@@ -725,7 +733,7 @@ mod tests {
 
     #[test]
     fn test_drain() {
-        let mut set = HashSet::with_hasher(SipHashBuilder);
+        let mut set = HashSet::with_hasher(SipHashBuilder::default());
         set.insert(1);
         set.insert(2);
         set.insert(3);
@@ -741,7 +749,7 @@ mod tests {
 
     #[test]
     fn test_multiple_insertions() {
-        let mut set = HashSet::with_hasher(SipHashBuilder);
+        let mut set = HashSet::with_hasher(SipHashBuilder::default());
 
         for i in 0..100 {
             assert!(set.insert(i));
@@ -762,7 +770,7 @@ mod tests {
 
     #[test]
     fn test_collision_handling() {
-        let mut set = HashSet::with_hasher(SipHashBuilder);
+        let mut set = HashSet::with_hasher(SipHashBuilder::default());
 
         for i in 0..1000 {
             assert!(set.insert(i));
@@ -791,7 +799,7 @@ mod tests {
 
     #[test]
     fn test_string_values() {
-        let mut set = HashSet::with_hasher(SipHashBuilder);
+        let mut set = HashSet::with_hasher(SipHashBuilder::default());
 
         assert!(set.insert("hello".to_string()));
         assert!(set.insert("world".to_string()));
@@ -817,7 +825,7 @@ mod tests {
 
     #[test]
     fn test_complex_values() {
-        let mut set = HashSet::with_hasher(SipHashBuilder);
+        let mut set = HashSet::with_hasher(SipHashBuilder::default());
 
         let vec1 = vec![1, 2, 3];
         let vec2 = vec![4, 5, 6];
@@ -834,9 +842,9 @@ mod tests {
 
     #[test]
     fn test_edge_cases() {
-        let mut set = HashSet::with_hasher(SipHashBuilder);
+        let mut set = HashSet::with_hasher(SipHashBuilder::default());
 
-        let empty_set = HashSet::<i32, _>::with_capacity_and_hasher(0, SipHashBuilder);
+        let empty_set = HashSet::<i32, _>::with_capacity_and_hasher(0, SipHashBuilder::default());
         assert_eq!(empty_set.len(), 0);
 
         assert!(!set.remove(&1));
@@ -854,7 +862,7 @@ mod tests {
 
     #[test]
     fn test_insert_remove_cycle() {
-        let mut set = HashSet::with_hasher(SipHashBuilder);
+        let mut set = HashSet::with_hasher(SipHashBuilder::default());
 
         for _ in 0..10 {
             for i in 0..50 {
@@ -872,7 +880,7 @@ mod tests {
 
     #[test]
     fn test_large_values() {
-        let mut set = HashSet::with_hasher(SipHashBuilder);
+        let mut set = HashSet::with_hasher(SipHashBuilder::default());
 
         for i in 0..100 {
             let large_string = "x".repeat(1000) + &i.to_string();
@@ -885,9 +893,9 @@ mod tests {
 
     #[test]
     fn test_numeric_types() {
-        let mut u8_set = HashSet::with_hasher(SipHashBuilder);
-        let mut u64_set = HashSet::with_hasher(SipHashBuilder);
-        let mut i32_set = HashSet::with_hasher(SipHashBuilder);
+        let mut u8_set = HashSet::with_hasher(SipHashBuilder::default());
+        let mut u64_set = HashSet::with_hasher(SipHashBuilder::default());
+        let mut i32_set = HashSet::with_hasher(SipHashBuilder::default());
 
         for i in 0u8..=255u8 {
             u8_set.insert(i);

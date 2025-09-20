@@ -7,12 +7,12 @@ use core::ptr::NonNull;
 
 #[inline(always)]
 fn target_load_factor(capacity: usize) -> usize {
-    ((capacity as u128 * 99) / 100) as usize
+    ((capacity as u128 * 999) / 1000) as usize
 }
 
 #[inline(always)]
 fn target_load_factor_inverse(capacity: usize) -> usize {
-    ((capacity as u128 * 100) / 99) as usize
+    ((capacity as u128 * 1000) / 999) as usize
 }
 
 #[inline(always)]
@@ -2603,6 +2603,8 @@ mod tests {
     use alloc::vec;
     use core::hash::Hasher;
 
+    use rand::TryRngCore;
+    use rand::rngs::OsRng;
     use siphasher::sip::SipHasher;
 
     use super::*;
@@ -2614,9 +2616,10 @@ mod tests {
 
     impl HashState {
         fn default() -> Self {
+            let mut rng = OsRng;
             Self {
-                k0: 0x736f6d6570736575,
-                k1: 0x646f72616e646f6d,
+                k0: rng.try_next_u64().unwrap(),
+                k1: rng.try_next_u64().unwrap(),
             }
         }
 
@@ -3033,7 +3036,7 @@ mod tests {
     #[cfg(feature = "std")]
     fn histogram_output() {
         let state = HashState::default();
-        let mut table: HashTable<Item> = HashTable::with_capacity(100000);
+        let mut table: HashTable<Item> = HashTable::with_capacity(10000);
         for k in 0..table.capacity() as u64 {
             let hash = hash_key(&state, k);
             match table.entry(hash, |v| v.key == k) {

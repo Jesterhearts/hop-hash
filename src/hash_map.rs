@@ -848,24 +848,33 @@ impl<'a, K, V> Drop for Drain<'a, K, V> {
 mod tests {
     use core::hash::BuildHasher;
 
+    use rand::TryRngCore;
+    use rand::rngs::OsRng;
     use siphasher::sip::SipHasher;
 
     use super::*;
 
     #[derive(Clone)]
-    struct SipHashBuilder;
+    struct SipHashBuilder {
+        k1: u64,
+        k2: u64,
+    }
 
     impl BuildHasher for SipHashBuilder {
         type Hasher = SipHasher;
 
         fn build_hasher(&self) -> Self::Hasher {
-            SipHasher::new()
+            SipHasher::new_with_keys(self.k1, self.k2)
         }
     }
 
     impl Default for SipHashBuilder {
         fn default() -> Self {
-            Self
+            let mut rng = OsRng;
+            Self {
+                k1: rng.try_next_u64().unwrap_or(0),
+                k2: rng.try_next_u64().unwrap_or(0),
+            }
         }
     }
 
@@ -875,7 +884,7 @@ mod tests {
         assert!(map.is_empty());
         assert_eq!(map.len(), 0);
 
-        let map2 = HashMap::<i32, String, _>::with_hasher(SipHashBuilder);
+        let map2 = HashMap::<i32, String, _>::with_hasher(SipHashBuilder::default());
         assert!(map2.is_empty());
         assert_eq!(map2.len(), 0);
     }
@@ -886,14 +895,15 @@ mod tests {
         assert!(map.capacity() >= 100);
         assert!(map.is_empty());
 
-        let map2 = HashMap::<i32, String, _>::with_capacity_and_hasher(200, SipHashBuilder);
+        let map2 =
+            HashMap::<i32, String, _>::with_capacity_and_hasher(200, SipHashBuilder::default());
         assert!(map2.capacity() >= 200);
         assert!(map2.is_empty());
     }
 
     #[test]
     fn test_insert_and_get() {
-        let mut map = HashMap::with_hasher(SipHashBuilder);
+        let mut map = HashMap::with_hasher(SipHashBuilder::default());
 
         assert_eq!(map.insert(1, "hello".to_string()), None);
         assert_eq!(map.len(), 1);
@@ -912,7 +922,7 @@ mod tests {
 
     #[test]
     fn test_get_mut() {
-        let mut map = HashMap::with_hasher(SipHashBuilder);
+        let mut map = HashMap::with_hasher(SipHashBuilder::default());
         map.insert(1, "hello".to_string());
 
         if let Some(value) = map.get_mut(&1) {
@@ -925,7 +935,7 @@ mod tests {
 
     #[test]
     fn test_contains_key() {
-        let mut map = HashMap::with_hasher(SipHashBuilder);
+        let mut map = HashMap::with_hasher(SipHashBuilder::default());
         assert!(!map.contains_key(&1));
 
         map.insert(1, "value".to_string());
@@ -935,7 +945,7 @@ mod tests {
 
     #[test]
     fn test_remove() {
-        let mut map = HashMap::with_hasher(SipHashBuilder);
+        let mut map = HashMap::with_hasher(SipHashBuilder::default());
         map.insert(1, "hello".to_string());
         map.insert(2, "world".to_string());
 
@@ -950,7 +960,7 @@ mod tests {
 
     #[test]
     fn test_remove_entry() {
-        let mut map = HashMap::with_hasher(SipHashBuilder);
+        let mut map = HashMap::with_hasher(SipHashBuilder::default());
         map.insert(1, "hello".to_string());
 
         assert_eq!(map.remove_entry(&1), Some((1, "hello".to_string())));
@@ -960,7 +970,7 @@ mod tests {
 
     #[test]
     fn test_clear() {
-        let mut map = HashMap::with_hasher(SipHashBuilder);
+        let mut map = HashMap::with_hasher(SipHashBuilder::default());
         map.insert(1, "hello".to_string());
         map.insert(2, "world".to_string());
 
@@ -974,7 +984,7 @@ mod tests {
 
     #[test]
     fn test_reserve() {
-        let mut map = HashMap::<i32, String, _>::with_hasher(SipHashBuilder);
+        let mut map = HashMap::<i32, String, _>::with_hasher(SipHashBuilder::default());
         let initial_capacity = map.capacity();
 
         map.reserve(1000);
@@ -983,7 +993,7 @@ mod tests {
 
     #[test]
     fn test_entry_api() {
-        let mut map = HashMap::with_hasher(SipHashBuilder);
+        let mut map = HashMap::with_hasher(SipHashBuilder::default());
 
         let value = map.entry(1).or_insert("hello".to_string());
         assert_eq!(value, &"hello".to_string());
@@ -1006,7 +1016,8 @@ mod tests {
 
     #[test]
     fn test_entry_or_default() {
-        let mut map: HashMap<i32, Vec<i32>, SipHashBuilder> = HashMap::with_hasher(SipHashBuilder);
+        let mut map: HashMap<i32, Vec<i32>, SipHashBuilder> =
+            HashMap::with_hasher(SipHashBuilder::default());
 
         map.entry(1).or_default().push(42);
         assert_eq!(map.get(&1), Some(&vec![42]));
@@ -1017,7 +1028,7 @@ mod tests {
 
     #[test]
     fn test_occupied_entry() {
-        let mut map = HashMap::with_hasher(SipHashBuilder);
+        let mut map = HashMap::with_hasher(SipHashBuilder::default());
         map.insert(1, "hello".to_string());
 
         match map.entry(1) {
@@ -1044,7 +1055,7 @@ mod tests {
 
     #[test]
     fn test_vacant_entry() {
-        let mut map = HashMap::with_hasher(SipHashBuilder);
+        let mut map = HashMap::with_hasher(SipHashBuilder::default());
 
         match map.entry(1) {
             Entry::Vacant(entry) => {
@@ -1062,7 +1073,7 @@ mod tests {
 
     #[test]
     fn test_iterators() {
-        let mut map = HashMap::with_hasher(SipHashBuilder);
+        let mut map = HashMap::with_hasher(SipHashBuilder::default());
         map.insert(1, "one".to_string());
         map.insert(2, "two".to_string());
         map.insert(3, "three".to_string());
@@ -1089,7 +1100,7 @@ mod tests {
 
     #[test]
     fn test_drain() {
-        let mut map = HashMap::with_hasher(SipHashBuilder);
+        let mut map = HashMap::with_hasher(SipHashBuilder::default());
         map.insert(1, "one".to_string());
         map.insert(2, "two".to_string());
         map.insert(3, "three".to_string());
@@ -1105,7 +1116,7 @@ mod tests {
 
     #[test]
     fn test_multiple_insertions() {
-        let mut map = HashMap::with_hasher(SipHashBuilder);
+        let mut map = HashMap::with_hasher(SipHashBuilder::default());
 
         for i in 0..100 {
             map.insert(i, format!("value_{}", i));
@@ -1120,7 +1131,7 @@ mod tests {
 
     #[test]
     fn test_collision_handling() {
-        let mut map = HashMap::with_hasher(SipHashBuilder);
+        let mut map = HashMap::with_hasher(SipHashBuilder::default());
 
         for i in 0..1000 {
             map.insert(i, i * 2);
@@ -1145,7 +1156,7 @@ mod tests {
 
     #[test]
     fn test_string_keys() {
-        let mut map = HashMap::with_hasher(SipHashBuilder);
+        let mut map = HashMap::with_hasher(SipHashBuilder::default());
 
         map.insert("hello".to_string(), 1);
         map.insert("world".to_string(), 2);
@@ -1166,7 +1177,7 @@ mod tests {
 
     #[test]
     fn test_complex_values() {
-        let mut map = HashMap::with_hasher(SipHashBuilder);
+        let mut map = HashMap::with_hasher(SipHashBuilder::default());
 
         let vec1 = vec![1, 2, 3];
         let vec2 = vec![4, 5, 6];
