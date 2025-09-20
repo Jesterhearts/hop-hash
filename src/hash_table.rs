@@ -474,7 +474,11 @@ impl<V> HashTable<V> {
         unsafe {
             NonNull::slice_from_raw_parts(
                 self.alloc.add(self.layout.buckets_offset).cast(),
-                (self.max_root_mask.wrapping_add(1) + HOP_RANGE) * 16,
+                if self.layout.layout.size() == 0 {
+                    0
+                } else {
+                    (self.max_root_mask.wrapping_add(1) + HOP_RANGE) * 16
+                },
             )
         }
     }
@@ -484,7 +488,11 @@ impl<V> HashTable<V> {
         unsafe {
             NonNull::slice_from_raw_parts(
                 self.alloc.add(self.layout.hashes_offset).cast(),
-                (self.max_root_mask.wrapping_add(1) + HOP_RANGE) * 16,
+                if self.layout.layout.size() == 0 {
+                    0
+                } else {
+                    (self.max_root_mask.wrapping_add(1) + HOP_RANGE) * 16
+                },
             )
         }
     }
@@ -494,7 +502,11 @@ impl<V> HashTable<V> {
         unsafe {
             NonNull::slice_from_raw_parts(
                 self.alloc.add(self.layout.tags_offset).cast(),
-                (self.max_root_mask.wrapping_add(1) + HOP_RANGE) * 16,
+                if self.layout.layout.size() == 0 {
+                    0
+                } else {
+                    (self.max_root_mask.wrapping_add(1) + HOP_RANGE) * 16
+                },
             )
         }
     }
