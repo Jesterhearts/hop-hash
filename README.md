@@ -44,6 +44,8 @@ failing:
 
 - **Graceful Degradation**: Maintains correctness under extreme conditions
 - **Rare Occurrence**: Overflow is uncommon with good hash functions
+  - Only occurs when more than 256 entries hash to the same bucket *and* resizing fails to
+    redistribute them.
 - **Transparent API**: Overflow entries are accessible through the same interface
 
 ## Performance Characteristics
