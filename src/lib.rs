@@ -1,10 +1,11 @@
-#[cfg_attr(not(feature = "std"), no_std)]
+#![warn(missing_docs)]
+#![doc = include_str!("../README.md")]
 use alloc::alloc::handle_alloc_error;
 use alloc::vec::Vec;
 use core::alloc::Layout;
 use core::fmt::Debug;
 use core::mem::MaybeUninit;
-use std::ptr::NonNull;
+use core::ptr::NonNull;
 
 extern crate alloc;
 
@@ -107,7 +108,7 @@ impl HopInfo {
         unsafe {
             let data = _mm_load_si128(self.neighbors.as_ptr() as *const __m128i);
             let cmp = _mm_cmpgt_epi8(data, _mm_setzero_si128());
-            _mm_movemask_epi8(cmp) as u16 & ((1 << HOP_RANGE) - 1) as u16
+            _mm_movemask_epi8(cmp) as u16
         }
     }
 
@@ -179,6 +180,60 @@ impl DataLayout {
     }
 }
 
+/// A high-performance hash table using 16-way hopscotch hashing.
+///
+/// `HashTable<V>` stores values of type `V` and provides fast insertion,
+/// lookup, and removal operations. Unlike standard hash maps, this
+/// implementation requires you to provide both the hash value and an equality
+/// predicate for each operation.
+///
+/// ## Performance Characteristics
+///
+/// - **Lookup**: O(1) average, O(N) worst case (typically 16 probes, but with a
+///   degenerate hash function you could end up with everything in the overflow,
+///   making it O(N))
+/// - **Insert**: O(1) average, O(1) worst case (bounded by neighborhood size)
+/// - **Remove**: O(1) average, O(N) worst case
+/// - **Memory**: 2 bytes per entry overhead, plus the size of `V` plus a u64
+///   for the hash.
+///
+/// ## Example
+///
+/// ```rust
+/// use std::hash::DefaultHasher;
+/// use std::hash::Hash;
+/// use std::hash::Hasher;
+///
+/// use hop_hash::HashTable;
+///
+/// #[derive(Debug, PartialEq)]
+/// struct Person {
+///     id: u64,
+///     name: String,
+/// }
+///
+/// fn hash_id(id: u64) -> u64 {
+///     let mut hasher = DefaultHasher::new();
+///     id.hash(&mut hasher);
+///     hasher.finish()
+/// }
+///
+/// let mut table = HashTable::with_capacity(100);
+/// let hash = hash_id(123);
+///
+/// // Insert a person
+/// match table.entry(hash, |p: &Person| p.id == 123) {
+///     hop_hash::Entry::Vacant(entry) => {
+///         entry.insert(Person {
+///             id: 123,
+///             name: "Alice".to_string(),
+///         });
+///     }
+///     hop_hash::Entry::Occupied(_) => {
+///         println!("Person already exists");
+///     }
+/// }
+/// ```
 pub struct HashTable<V> {
     layout: DataLayout,
     alloc: NonNull<u8>,
@@ -195,6 +250,8 @@ pub struct HashTable<V> {
 impl<V> Debug for HashTable<V> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         use alloc::format;
+        use alloc::string::ToString;
+
         if self.is_empty() {
             return f
                 .debug_struct("HashTable")
@@ -237,7 +294,7 @@ impl<V> Debug for HashTable<V> {
                         .map(|w| {
                             let mut items = Vec::new();
                             for b in w {
-                                if *b == 0 {
+                                if *b == EMPTY {
                                     items.push("..".to_string());
                                 } else {
                                     items.push(format!("{:02x}", b));
@@ -280,6 +337,26 @@ impl<V> Drop for HashTable<V> {
 }
 
 impl<V> HashTable<V> {
+    /// Creates a new hash table with the specified capacity.
+    ///
+    /// The actual capacity may be larger than requested due to the bucket-based
+    /// organization. The table will not resize until the load factor exceeds
+    /// 93.75%.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use hop_hash::HashTable;
+    ///
+    /// // Create a table that can hold at least 100 items without resizing
+    /// let table: HashTable<String> = HashTable::with_capacity(100);
+    /// assert!(table.capacity() >= 100);
+    /// ```
+    ///
+    /// # Performance
+    ///
+    /// Creating a table with the expected final size avoids expensive resize
+    /// operations during insertion.
     pub fn with_capacity(capacity: usize) -> Self {
         let capacity: Capacity = ((capacity.div_ceil(16) as u128 * 16 / 15) as usize).into();
 
@@ -357,6 +434,38 @@ impl<V> HashTable<V> {
         }
     }
 
+    /// Returns an iterator over all values in the table.
+    ///
+    /// The iterator yields `&V` references in an arbitrary order.
+    /// The iteration order is not specified and may change between versions.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use std::hash::DefaultHasher;
+    /// use std::hash::Hash;
+    /// use std::hash::Hasher;
+    ///
+    /// use hop_hash::HashTable;
+    ///
+    /// fn hash_str(s: &str) -> u64 {
+    ///     let mut hasher = DefaultHasher::new();
+    ///     s.hash(&mut hasher);
+    ///     hasher.finish()
+    /// }
+    ///
+    /// let mut table = HashTable::with_capacity(10);
+    /// table
+    ///     .entry(hash_str("key1"), |s: &String| s == "key1")
+    ///     .or_insert("key1".to_string());
+    /// table
+    ///     .entry(hash_str("key2"), |s: &String| s == "key2")
+    ///     .or_insert("key1".to_string());
+    ///
+    /// for value in table.iter() {
+    ///     println!("Value: {}", value);
+    /// }
+    /// ```
     pub fn iter(&self) -> Iter<'_, V> {
         Iter {
             table: self,
@@ -365,6 +474,35 @@ impl<V> HashTable<V> {
         }
     }
 
+    /// Returns an iterator that removes and yields all values from the table.
+    ///
+    /// After calling `drain()`, the table will be empty. The iterator yields
+    /// owned values in an arbitrary order.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use std::hash::DefaultHasher;
+    /// use std::hash::Hash;
+    /// use std::hash::Hasher;
+    ///
+    /// use hop_hash::HashTable;
+    ///
+    /// fn hash_str(s: &str) -> u64 {
+    ///     let mut hasher = DefaultHasher::new();
+    ///     s.hash(&mut hasher);
+    ///     hasher.finish()
+    /// }
+    ///
+    /// let mut table = HashTable::with_capacity(10);
+    /// table
+    ///     .entry(hash_str("key1"), |s: &String| s == "key1")
+    ///     .or_insert("key1".to_string());
+    ///
+    /// let values: Vec<String> = table.drain().collect();
+    /// assert!(table.is_empty());
+    /// assert_eq!(values.len(), 1);
+    /// ```
     pub fn drain(&mut self) -> Drain<'_, V> {
         Drain {
             table: self,
@@ -372,14 +510,195 @@ impl<V> HashTable<V> {
         }
     }
 
+    /// Returns `true` if the table contains no elements.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use hop_hash::HashTable;
+    ///
+    /// let table: HashTable<i32> = HashTable::with_capacity(10);
+    /// assert!(table.is_empty());
+    /// ```
     pub fn is_empty(&self) -> bool {
         self.populated == 0
     }
 
+    /// Returns the number of elements in the table.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use std::hash::DefaultHasher;
+    /// use std::hash::Hash;
+    /// use std::hash::Hasher;
+    ///
+    /// use hop_hash::HashTable;
+    ///
+    /// fn hash_u64(n: u64) -> u64 {
+    ///     let mut hasher = DefaultHasher::new();
+    ///     n.hash(&mut hasher);
+    ///     hasher.finish()
+    /// }
+    ///
+    /// let mut table = HashTable::with_capacity(10);
+    /// assert_eq!(table.len(), 0);
+    ///
+    /// table.entry(hash_u64(1), |&n: &u64| n == 1).or_insert(1);
+    /// assert_eq!(table.len(), 1);
+    /// ```
     pub fn len(&self) -> usize {
         self.populated
     }
 
+    /// Removes all elements from the table.
+    ///
+    /// This operation preserves the table's allocated capacity. All values are
+    /// properly dropped if they implement `Drop`. After calling `clear()`, the
+    /// table will be empty but maintain its current capacity.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use std::hash::DefaultHasher;
+    /// use std::hash::Hash;
+    /// use std::hash::Hasher;
+    ///
+    /// use hop_hash::HashTable;
+    ///
+    /// fn hash_u64(n: u64) -> u64 {
+    ///     let mut hasher = DefaultHasher::new();
+    ///     n.hash(&mut hasher);
+    ///     hasher.finish()
+    /// }
+    ///
+    /// let mut table = HashTable::with_capacity(10);
+    /// table.entry(hash_u64(1), |&n: &u64| n == 1).or_insert(1);
+    /// table.entry(hash_u64(2), |&n: &u64| n == 2).or_insert(2);
+    /// assert_eq!(table.len(), 2);
+    ///
+    /// table.clear();
+    /// assert_eq!(table.len(), 0);
+    /// assert!(table.is_empty());
+    /// ```
+    ///
+    /// # Performance
+    ///
+    /// This operation is O(n) where n is the number of elements in the table,
+    /// due to the need to drop all contained values.
+    pub fn clear(&mut self) {
+        // SAFETY: All pointers are valid, allocated by this struct. Values are properly
+        // initialized before drop.
+        unsafe {
+            if core::mem::needs_drop::<V>() && self.populated > 0 {
+                for (word_idx, word) in self.tags_ptr().as_ref().iter().enumerate() {
+                    if *word != EMPTY {
+                        self.buckets_ptr()
+                            .as_mut()
+                            .get_unchecked_mut(word_idx)
+                            .assume_init_drop();
+                    }
+                }
+            }
+
+            if self.layout.layout.size() != 0 {
+                core::ptr::write_bytes(self.alloc.as_ptr(), 0x0, self.layout.tags_offset);
+                core::ptr::write_bytes(
+                    self.alloc.as_ptr().add(self.layout.tags_offset),
+                    EMPTY,
+                    self.layout.buckets_offset - self.layout.tags_offset,
+                );
+            }
+        }
+
+        self.populated = 0;
+        self.overflow.clear();
+    }
+
+    /// Reserves capacity for at least `additional` more elements.
+    ///
+    /// The collection may reserve more space to speculatively avoid frequent
+    /// reallocations. After calling `reserve`, capacity will be greater than or
+    /// equal to `self.len() + additional`. Does nothing if capacity is already
+    /// sufficient.
+    ///
+    /// # Arguments
+    ///
+    /// * `additional` - The number of additional elements the table should be
+    ///   able to hold
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use hop_hash::HashTable;
+    ///
+    /// let mut table: HashTable<i32> = HashTable::with_capacity(15);
+    /// for i in 0..15 {
+    ///     table.entry(i as u64, |&n: &i32| n == i).or_insert(i);
+    /// }
+    /// let original_capacity = table.capacity();
+    ///
+    /// // Reserve space for 50 more elements
+    /// table.reserve(50);
+    /// assert!(table.capacity() >= original_capacity + 50);
+    /// ```
+    ///
+    /// # Performance
+    ///
+    /// If a resize is necessary, this operation requires O(n) time where n is
+    /// the current number of elements, as all elements must be rehashed and
+    /// moved to new positions.
+    pub fn reserve(&mut self, additional: usize) {
+        let required = self.populated.saturating_add(additional);
+        if required > self.max_pop {
+            let new_capacity: Capacity =
+                ((required.div_ceil(16) as u128 * 16 / 15) as usize).into();
+            self.do_resize_rehash(new_capacity);
+        }
+    }
+
+    /// Removes and returns a value from the table.
+    ///
+    /// The value is identified by its hash and an equality predicate. If the
+    /// value is found, it is removed from the table and returned.
+    /// Otherwise, `None` is returned.
+    ///
+    /// # Arguments
+    ///
+    /// * `hash` - The hash value of the entry to remove
+    /// * `eq` - A predicate function that returns `true` for the value to
+    ///   remove
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use std::hash::DefaultHasher;
+    /// use std::hash::Hash;
+    /// use std::hash::Hasher;
+    ///
+    /// use hop_hash::HashTable;
+    ///
+    /// fn hash_u64(n: u64) -> u64 {
+    ///     let mut hasher = DefaultHasher::new();
+    ///     n.hash(&mut hasher);
+    ///     hasher.finish()
+    /// }
+    ///
+    /// let mut table = HashTable::with_capacity(10);
+    /// table.entry(hash_u64(42), |&n: &u64| n == 42).or_insert(42);
+    ///
+    /// let removed = table.remove(hash_u64(42), |&n| n == 42);
+    /// assert_eq!(removed, Some(42));
+    /// assert!(table.is_empty());
+    ///
+    /// // Removing non-existent value returns None
+    /// let not_found = table.remove(hash_u64(99), |&n| n == 99);
+    /// assert_eq!(not_found, None);
+    /// ```
+    ///
+    /// # Performance
+    ///
+    /// Average case: O(1), Worst case: O(1) bounded by neighborhood size
     pub fn remove(&mut self, hash: u64, eq: impl Fn(&V) -> bool) -> Option<V> {
         if self.populated == 0 {
             return None;
@@ -425,13 +744,62 @@ impl<V> HashTable<V> {
         None
     }
 
+    /// Gets an entry for the given hash and equality predicate.
+    ///
+    /// This method returns an `Entry` enum that allows for efficient insertion
+    /// or modification of values. The entry API provides zero-cost abstractions
+    /// for common patterns like "insert if not exists" or "update if exists".
+    ///
+    /// # Arguments
+    ///
+    /// * `hash` - The hash value for the entry
+    /// * `eq` - A predicate function that returns `true` for matching values
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use std::hash::DefaultHasher;
+    /// use std::hash::Hash;
+    /// use std::hash::Hasher;
+    ///
+    /// use hop_hash::HashTable;
+    ///
+    /// fn hash_str(s: &str) -> u64 {
+    ///     let mut hasher = DefaultHasher::new();
+    ///     s.hash(&mut hasher);
+    ///     hasher.finish()
+    /// }
+    ///
+    /// let mut table = HashTable::with_capacity(10);
+    /// let hash = hash_str("hello");
+    ///
+    /// // Insert or update pattern
+    /// match table.entry(hash, |s: &String| s == "hello") {
+    ///     hop_hash::Entry::Vacant(entry) => {
+    ///         entry.insert("world".to_string());
+    ///     }
+    ///     hop_hash::Entry::Occupied(mut entry) => {
+    ///         *entry.get_mut() = "updated".to_string();
+    ///     }
+    /// }
+    ///
+    /// // Or use the convenience method
+    /// table
+    ///     .entry(hash, |s: &String| s == "hello")
+    ///     .or_insert("hello".to_string());
+    /// ```
+    ///
+    /// # Performance
+    ///
+    /// The entry API performs only a single hash table lookup, making it more
+    /// efficient than separate `find` and `insert` operations.
     #[inline(always)]
     pub fn entry(&mut self, hash: u64, eq: impl Fn(&V) -> bool) -> Entry<'_, V> {
         self.maybe_resize_rehash();
         self.entry_impl(hash, eq)
     }
 
-    #[inline(always)]
+    #[inline]
     fn search_neighborhood(
         &self,
         hash: u64,
@@ -588,7 +956,7 @@ impl<V> HashTable<V> {
         if empty_idx.is_none()
             || empty_idx.unwrap() >= self.absolute_index(self.max_root_mask + 1 + HOP_RANGE, 0)
         {
-            self.do_resize_rehash();
+            self.resize_rehash();
             return unsafe { self.do_vacant_lookup(hash, self.hopmap_index(hash)) };
         }
 
@@ -678,7 +1046,7 @@ impl<V> HashTable<V> {
                     };
                 }
 
-                self.do_resize_rehash();
+                self.resize_rehash();
                 return unsafe { self.do_vacant_lookup(hash, self.hopmap_index(hash)) };
             }
         }
@@ -789,6 +1157,47 @@ impl<V> HashTable<V> {
         }
     }
 
+    /// Finds a value in the table by hash and equality predicate.
+    ///
+    /// Returns a reference to the value if found, or `None` if no matching
+    /// value exists. This method does not modify the table and can be
+    /// called on shared references.
+    ///
+    /// # Arguments
+    ///
+    /// * `hash` - The hash value to search for
+    /// * `eq` - A predicate function that returns `true` for the desired value
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use std::hash::DefaultHasher;
+    /// use std::hash::Hash;
+    /// use std::hash::Hasher;
+    ///
+    /// use hop_hash::HashTable;
+    ///
+    /// fn hash_u64(n: u64) -> u64 {
+    ///     let mut hasher = DefaultHasher::new();
+    ///     n.hash(&mut hasher);
+    ///     hasher.finish()
+    /// }
+    ///
+    /// let mut table = HashTable::with_capacity(10);
+    /// table.entry(hash_u64(42), |&n: &u64| n == 42).or_insert(42);
+    ///
+    /// // Find existing value
+    /// let found = table.find(hash_u64(42), |&n| n == 42);
+    /// assert_eq!(found, Some(&42));
+    ///
+    /// // Search for non-existent value
+    /// let not_found = table.find(hash_u64(99), |&n| n == 99);
+    /// assert_eq!(not_found, None);
+    /// ```
+    ///
+    /// # Performance
+    ///
+    /// Average case: O(1), Worst case: O(1) bounded by neighborhood size
     #[inline]
     pub fn find(&self, hash: u64, eq: impl Fn(&V) -> bool) -> Option<&V> {
         if self.populated == 0 {
@@ -816,6 +1225,52 @@ impl<V> HashTable<V> {
             .find(|&overflow| eq(overflow))
     }
 
+    /// Finds a value in the table by hash and equality predicate, returning a
+    /// mutable reference.
+    ///
+    /// Returns a mutable reference to the value if found, or `None` if no
+    /// matching value exists. This method allows modification of values
+    /// in-place without removing and re-inserting them.
+    ///
+    /// # Arguments
+    ///
+    /// * `hash` - The hash value to search for
+    /// * `eq` - A predicate function that returns `true` for the desired value
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use std::hash::DefaultHasher;
+    /// use std::hash::Hash;
+    /// use std::hash::Hasher;
+    ///
+    /// use hop_hash::HashTable;
+    ///
+    /// fn hash_u64(n: u64) -> u64 {
+    ///     let mut hasher = DefaultHasher::new();
+    ///     n.hash(&mut hasher);
+    ///     hasher.finish()
+    /// }
+    ///
+    /// let mut table = HashTable::with_capacity(10);
+    /// table.entry(hash_u64(42), |&n: &u64| n == 42).or_insert(42);
+    ///
+    /// // Find and modify existing value
+    /// if let Some(value) = table.find_mut(hash_u64(42), |&n| n == 42) {
+    ///     *value = 100;
+    /// }
+    ///
+    /// let found = table.find(hash_u64(42), |&n| n == 100);
+    /// assert_eq!(found, Some(&100));
+    ///
+    /// // Search for non-existent value
+    /// let not_found = table.find_mut(hash_u64(99), |&n| n == 99);
+    /// assert_eq!(not_found, None);
+    /// ```
+    ///
+    /// # Performance
+    ///
+    /// Average case: O(1), Worst case: O(1) bounded by neighborhood size
     #[inline]
     pub fn find_mut(&mut self, hash: u64, eq: impl Fn(&V) -> bool) -> Option<&mut V> {
         if self.populated == 0 {
@@ -846,15 +1301,24 @@ impl<V> HashTable<V> {
     #[inline]
     fn maybe_resize_rehash(&mut self) {
         if self.populated >= self.max_pop {
-            self.do_resize_rehash();
+            self.resize_rehash();
         }
     }
 
-    #[inline(always)]
+    #[inline]
     #[cold]
-    fn do_resize_rehash(&mut self) {
+    fn resize_rehash(&mut self) {
         let capacity = self.max_root_mask.wrapping_add(1).max(HOP_RANGE) + 1;
         let capacity: Capacity = capacity.into();
+
+        self.do_resize_rehash(capacity);
+    }
+
+    #[inline]
+    fn do_resize_rehash(&mut self, capacity: Capacity) {
+        debug_assert!(
+            capacity.max_root_mask() > self.max_root_mask || self.max_root_mask == usize::MAX
+        );
 
         let new_layout = DataLayout::new::<V>(capacity);
         let new_alloc = unsafe {
@@ -871,17 +1335,13 @@ impl<V> HashTable<V> {
 
             NonNull::new_unchecked(raw_alloc)
         };
-
         let old_layout = core::mem::replace(&mut self.layout, new_layout);
         let old_alloc = core::mem::replace(&mut self.alloc, new_alloc);
-
         let old_max_root = self.max_root_mask.wrapping_add(1);
         let old_base = old_max_root + HOP_RANGE;
         let old_empty_words = old_base * 16;
-
         self.max_pop = ((capacity.max_root_mask().wrapping_add(1) * 16) as u128 * 15 / 16) as usize;
         self.max_root_mask = capacity.max_root_mask();
-
         if self.populated == 0 {
             unsafe {
                 if old_layout.layout.size() != 0 {
@@ -891,23 +1351,19 @@ impl<V> HashTable<V> {
 
             return;
         }
-
-        let overflows = self.overflow.drain(..).collect::<Vec<_>>();
-
+        let overflows = core::mem::take(&mut self.overflow);
         let old_emptymap: NonNull<[u8]> = unsafe {
             NonNull::slice_from_raw_parts(
                 old_alloc.add(old_layout.tags_offset).cast(),
                 old_empty_words,
             )
         };
-
         let old_hashes: NonNull<[MaybeUninit<u64>]> = unsafe {
             NonNull::slice_from_raw_parts(
                 old_alloc.add(old_layout.hashes_offset).cast(),
                 old_base * 16,
             )
         };
-
         let old_buckets: NonNull<[MaybeUninit<V>]> = unsafe {
             NonNull::slice_from_raw_parts(
                 old_alloc.add(old_layout.buckets_offset).cast(),
@@ -950,7 +1406,6 @@ impl<V> HashTable<V> {
                     1,
                 );
                 self.set_occupied(self.absolute_index(bucket, 0), hashtag(hash));
-                // SAFETY: index 0 is always within bounds of HOP_RANGE
                 self.hopmap_ptr().as_mut().get_unchecked_mut(bucket).set(0);
             }
 
@@ -1019,6 +1474,27 @@ impl<V> HashTable<V> {
         }
     }
 
+    /// Returns the current capacity of the table.
+    ///
+    /// The capacity represents the maximum number of elements the table can
+    /// hold before it needs to resize. Due to the hopscotch hashing
+    /// algorithm and bucket-based organization, the actual capacity may be
+    /// larger than what was initially requested.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use hop_hash::HashTable;
+    ///
+    /// let table: HashTable<i32> = HashTable::with_capacity(100);
+    /// println!("Table can hold {} elements", table.capacity());
+    /// assert!(table.capacity() >= 100);
+    /// ```
+    ///
+    /// # Load Factor
+    ///
+    /// The table maintains a load factor of approximately 93.75% (15/16) before
+    /// triggering a resize operation.
     pub fn capacity(&self) -> usize {
         self.max_pop
     }
@@ -1088,11 +1564,263 @@ impl Iterator for Sse2FindOccupiedIter {
     }
 }
 
+/// A view into a single entry in the hash table, which may be vacant or
+/// occupied.
+///
+/// This enum is constructed from the [`entry`] method on [`HashTable`].
+/// It provides efficient APIs for insertion and modification operations.
+///
+/// [`entry`]: HashTable::entry
+///
+/// # Examples
+///
+/// ```rust
+/// use std::hash::DefaultHasher;
+/// use std::hash::Hash;
+/// use std::hash::Hasher;
+///
+/// use hop_hash::Entry;
+/// use hop_hash::HashTable;
+///
+/// fn hash_str(s: &str) -> u64 {
+///     let mut hasher = DefaultHasher::new();
+///     s.hash(&mut hasher);
+///     hasher.finish()
+/// }
+///
+/// let mut table = HashTable::with_capacity(10);
+/// let hash = hash_str("key");
+///
+/// match table.entry(hash, |s: &String| s == "key") {
+///     Entry::Vacant(entry) => {
+///         entry.insert("value".to_string());
+///     }
+///     Entry::Occupied(entry) => {
+///         println!("Key already exists with value: {}", entry.get());
+///     }
+/// }
+/// ```
 pub enum Entry<'a, V> {
+    /// A vacant entry - the key is not present in the table
     Vacant(VacantEntry<'a, V>),
+    /// An occupied entry - the key is present in the table
     Occupied(OccupiedEntry<'a, V>),
 }
 
+impl<'a, V> Entry<'a, V> {
+    /// Inserts a default value if the entry is vacant and returns a mutable
+    /// reference.
+    ///
+    /// If the entry is occupied, returns a mutable reference to the existing
+    /// value. This method provides a convenient way to implement "insert or
+    /// get" semantics.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use std::hash::DefaultHasher;
+    /// use std::hash::Hash;
+    /// use std::hash::Hasher;
+    ///
+    /// use hop_hash::HashTable;
+    ///
+    /// fn hash_str(s: &str) -> u64 {
+    ///     let mut hasher = DefaultHasher::new();
+    ///     s.hash(&mut hasher);
+    ///     hasher.finish()
+    /// }
+    ///
+    /// let mut table = HashTable::with_capacity(10);
+    /// let hash = hash_str("key");
+    ///
+    /// // Insert if not present
+    /// let value = table
+    ///     .entry(hash, |s: &String| s == "key")
+    ///     .or_insert("key".to_string());
+    /// assert_eq!(value, "key");
+    ///
+    /// // Get existing value
+    /// let existing = table
+    ///     .entry(hash, |s: &String| s == "key")
+    ///     .or_insert("other".to_string());
+    /// assert_eq!(existing, "key");
+    /// ```
+    pub fn or_insert(self, default: V) -> &'a mut V {
+        match self {
+            Entry::Occupied(entry) => entry.into_mut(),
+            Entry::Vacant(entry) => entry.insert(default),
+        }
+    }
+
+    /// Inserts a value computed from a closure if the entry is vacant and
+    /// returns a mutable reference.
+    ///
+    /// If the entry is occupied, returns a mutable reference to the existing
+    /// value. If the entry is vacant, calls the provided closure to compute
+    /// the value and inserts it.
+    ///
+    /// # Arguments
+    ///
+    /// * `default` - A closure that returns the value to insert if the entry is
+    ///   vacant
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use std::hash::DefaultHasher;
+    /// use std::hash::Hash;
+    /// use std::hash::Hasher;
+    ///
+    /// use hop_hash::HashTable;
+    ///
+    /// fn hash_str(s: &str) -> u64 {
+    ///     let mut hasher = DefaultHasher::new();
+    ///     s.hash(&mut hasher);
+    ///     hasher.finish()
+    /// }
+    ///
+    /// let mut table = HashTable::with_capacity(10);
+    /// let hash = hash_str("key");
+    ///
+    /// // Insert with computed value
+    /// let value = table
+    ///     .entry(hash, |s: &String| s == "key")
+    ///     .or_insert_with(|| "key".to_string());
+    /// assert_eq!(value, "key");
+    ///
+    /// // Get existing value (closure is not called)
+    /// let existing = table
+    ///     .entry(hash, |s: &String| s == "key")
+    ///     .or_insert_with(|| panic!("Should not be called"));
+    /// assert_eq!(existing, "key");
+    /// ```
+    ///
+    /// # Performance
+    ///
+    /// The closure is only called if the entry is vacant, providing lazy
+    /// evaluation of the default value.
+    pub fn or_insert_with(self, default: impl FnOnce() -> V) -> &'a mut V {
+        match self {
+            Entry::Occupied(entry) => entry.into_mut(),
+            Entry::Vacant(entry) => entry.insert(default()),
+        }
+    }
+
+    /// Provides in-place mutable access to an occupied entry before any
+    /// potential inserts into the table.
+    ///
+    /// If the entry is occupied, applies the provided closure to the existing
+    /// value and returns a mutable reference to it. If the entry is vacant,
+    /// returns `None` without inserting anything.
+    ///
+    /// # Arguments
+    ///
+    /// * `f` - A closure that modifies the existing value
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use std::hash::DefaultHasher;
+    /// use std::hash::Hash;
+    /// use std::hash::Hasher;
+    ///
+    /// use hop_hash::HashTable;
+    ///
+    /// fn hash_u64(n: u64) -> u64 {
+    ///     let mut hasher = DefaultHasher::new();
+    ///     n.hash(&mut hasher);
+    ///     hasher.finish()
+    /// }
+    ///
+    /// let mut table = HashTable::with_capacity(10);
+    /// let hash = hash_u64(42);
+    ///
+    /// // Entry doesn't exist, so and_modify returns None
+    /// let result = table
+    ///     .entry(hash, |&n: &u64| n == 42)
+    ///     .and_modify(|v| *v += 1);
+    /// assert_eq!(result, None);
+    ///
+    /// // Insert a value
+    /// table.entry(hash, |&n: &u64| n == 42).or_insert(42);
+    ///
+    /// // Now modify the existing value
+    /// let result = table
+    ///     .entry(hash, |&n: &u64| n == 42)
+    ///     .and_modify(|v| *v += 1);
+    /// assert_eq!(result, Some(&mut 43));
+    /// ```
+    ///
+    /// This method is useful for implementing "update if exists" semantics
+    /// without inserting a default value when the key is not present.
+    pub fn and_modify(self, f: impl FnOnce(&mut V)) -> Option<&'a mut V> {
+        match self {
+            Entry::Occupied(entry) => {
+                let value = entry.into_mut();
+                f(value);
+                Some(value)
+            }
+            Entry::Vacant(_) => None,
+        }
+    }
+
+    /// Inserts the default value if the entry is vacant and returns a mutable
+    /// reference.
+    ///
+    /// If the entry is occupied, returns a mutable reference to the existing
+    /// value. If the entry is vacant, inserts the default value for type `V`
+    /// and returns a mutable reference to it.
+    ///
+    /// This method requires that `V` implements the `Default` trait.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use std::hash::DefaultHasher;
+    /// use std::hash::Hash;
+    /// use std::hash::Hasher;
+    ///
+    /// use hop_hash::HashTable;
+    ///
+    /// fn hash_str(s: &str) -> u64 {
+    ///     let mut hasher = DefaultHasher::new();
+    ///     s.hash(&mut hasher);
+    ///     hasher.finish()
+    /// }
+    ///
+    /// let mut table: HashTable<Vec<i32>> = HashTable::with_capacity(10);
+    /// let hash = hash_str("key");
+    ///
+    /// // Insert default value (empty Vec)
+    /// let vec_ref = table.entry(hash, |v: &Vec<i32>| v.is_empty()).or_default();
+    /// vec_ref.push(1);
+    /// vec_ref.push(2);
+    ///
+    /// assert_eq!(
+    ///     table.find(hash, |v: &Vec<i32>| !v.is_empty()),
+    ///     Some(&vec![1, 2])
+    /// );
+    /// ```
+    ///
+    /// # Performance
+    ///
+    /// Equivalent to calling `or_insert_with(Default::default)` but more
+    /// concise when the default value is sufficient.
+    pub fn or_default(self) -> &'a mut V
+    where
+        V: Default,
+    {
+        self.or_insert_with(Default::default)
+    }
+}
+
+/// A view into a vacant entry in the hash table.
+///
+/// This struct is created by the [`entry`] method on [`HashTable`] when the
+/// requested key is not present in the table. It provides methods to insert
+/// a value into the vacant slot.
+///
+/// [`entry`]: HashTable::entry
 pub struct VacantEntry<'a, V> {
     table: &'a mut HashTable<V>,
     hopmap_root: usize,
@@ -1102,6 +1830,39 @@ pub struct VacantEntry<'a, V> {
 }
 
 impl<'a, V> VacantEntry<'a, V> {
+    /// Inserts a value into the vacant entry and returns a mutable reference to
+    /// it.
+    ///
+    /// The value is inserted at the position determined by the hash and
+    /// hopscotch algorithm. This operation has O(1) complexity.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use std::hash::DefaultHasher;
+    /// use std::hash::Hash;
+    /// use std::hash::Hasher;
+    ///
+    /// use hop_hash::Entry;
+    /// use hop_hash::HashTable;
+    ///
+    /// fn hash_str(s: &str) -> u64 {
+    ///     let mut hasher = DefaultHasher::new();
+    ///     s.hash(&mut hasher);
+    ///     hasher.finish()
+    /// }
+    ///
+    /// let mut table = HashTable::with_capacity(10);
+    /// let hash = hash_str("key");
+    ///
+    /// match table.entry(hash, |s: &String| s == "key") {
+    ///     Entry::Vacant(entry) => {
+    ///         let value_ref = entry.insert("value".to_string());
+    ///         assert_eq!(value_ref, "value");
+    ///     }
+    ///     Entry::Occupied(_) => unreachable!("Entry should be vacant"),
+    /// }
+    /// ```
     pub fn insert(self, value: V) -> &'a mut V {
         self.table.populated += 1;
         if self.is_overflow {
@@ -1141,6 +1902,13 @@ impl<'a, V> VacantEntry<'a, V> {
     }
 }
 
+/// A view into an occupied entry in the hash table.
+///
+/// This struct is created by the [`entry`] method on [`HashTable`] when the
+/// requested key is present in the table. It provides methods to access,
+/// modify, or remove the existing value.
+///
+/// [`entry`]: HashTable::entry
 pub struct OccupiedEntry<'a, V> {
     table: &'a mut HashTable<V>,
     root_index: usize,
@@ -1149,6 +1917,37 @@ pub struct OccupiedEntry<'a, V> {
 }
 
 impl<'a, V> OccupiedEntry<'a, V> {
+    /// Gets a reference to the value in the entry.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use std::hash::DefaultHasher;
+    /// use std::hash::Hash;
+    /// use std::hash::Hasher;
+    ///
+    /// use hop_hash::Entry;
+    /// use hop_hash::HashTable;
+    ///
+    /// fn hash_str(s: &str) -> u64 {
+    ///     let mut hasher = DefaultHasher::new();
+    ///     s.hash(&mut hasher);
+    ///     hasher.finish()
+    /// }
+    ///
+    /// let mut table = HashTable::with_capacity(10);
+    /// let hash = hash_str("key");
+    /// table
+    ///     .entry(hash, |s: &String| s == "key")
+    ///     .or_insert("key".to_string());
+    ///
+    /// match table.entry(hash, |s: &String| s == "key") {
+    ///     Entry::Occupied(entry) => {
+    ///         assert_eq!(entry.get(), "key");
+    ///     }
+    ///     Entry::Vacant(_) => unreachable!(),
+    /// }
+    /// ```
     pub fn get(&self) -> &V {
         if let Some(overflow_index) = self.overflow_index {
             return unsafe { &self.table.overflow.get_unchecked(overflow_index).1 };
@@ -1163,6 +1962,37 @@ impl<'a, V> OccupiedEntry<'a, V> {
         }
     }
 
+    /// Gets a mutable reference to the value in the entry.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use std::hash::DefaultHasher;
+    /// use std::hash::Hash;
+    /// use std::hash::Hasher;
+    ///
+    /// use hop_hash::Entry;
+    /// use hop_hash::HashTable;
+    ///
+    /// fn hash_str(s: &str) -> u64 {
+    ///     let mut hasher = DefaultHasher::new();
+    ///     s.hash(&mut hasher);
+    ///     hasher.finish()
+    /// }
+    ///
+    /// let mut table = HashTable::with_capacity(10);
+    /// let hash = hash_str("key");
+    /// table
+    ///     .entry(hash, |s: &String| s == "key")
+    ///     .or_insert("key".to_string());
+    ///
+    /// match table.entry(hash, |s: &String| s == "key") {
+    ///     Entry::Occupied(mut entry) => {
+    ///         *entry.get_mut() = "modified".to_string();
+    ///     }
+    ///     Entry::Vacant(_) => unreachable!(),
+    /// }
+    /// ```
     pub fn get_mut(&mut self) -> &mut V {
         if let Some(overflow_index) = self.overflow_index {
             return unsafe { &mut self.table.overflow.get_unchecked_mut(overflow_index).1 };
@@ -1177,6 +2007,37 @@ impl<'a, V> OccupiedEntry<'a, V> {
         }
     }
 
+    /// Converts the entry into a mutable reference to the value with the
+    /// lifetime of the entry.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use std::hash::DefaultHasher;
+    /// use std::hash::Hash;
+    /// use std::hash::Hasher;
+    ///
+    /// use hop_hash::Entry;
+    /// use hop_hash::HashTable;
+    ///
+    /// fn hash_str(s: &str) -> u64 {
+    ///     let mut hasher = DefaultHasher::new();
+    ///     s.hash(&mut hasher);
+    ///     hasher.finish()
+    /// }
+    ///
+    /// let mut table = HashTable::with_capacity(10);
+    /// let hash = hash_str("key");
+    /// table
+    ///     .entry(hash, |s: &String| s == "key")
+    ///     .or_insert("key".to_string());
+    ///
+    /// let value_ref = match table.entry(hash, |s: &String| s == "key") {
+    ///     Entry::Occupied(entry) => entry.into_mut(),
+    ///     Entry::Vacant(_) => unreachable!(),
+    /// };
+    /// *value_ref = "new_value".to_string();
+    /// ```
     pub fn into_mut(self) -> &'a mut V {
         if let Some(overflow_index) = self.overflow_index {
             return unsafe { &mut self.table.overflow.get_unchecked_mut(overflow_index).1 };
@@ -1191,6 +2052,37 @@ impl<'a, V> OccupiedEntry<'a, V> {
         }
     }
 
+    /// Removes the entry from the table and returns the value.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use std::hash::DefaultHasher;
+    /// use std::hash::Hash;
+    /// use std::hash::Hasher;
+    ///
+    /// use hop_hash::Entry;
+    /// use hop_hash::HashTable;
+    ///
+    /// fn hash_str(s: &str) -> u64 {
+    ///     let mut hasher = DefaultHasher::new();
+    ///     s.hash(&mut hasher);
+    ///     hasher.finish()
+    /// }
+    ///
+    /// let mut table = HashTable::with_capacity(10);
+    /// let hash = hash_str("key");
+    /// table
+    ///     .entry(hash, |s: &String| s == "key")
+    ///     .or_insert("key".to_string());
+    ///
+    /// let removed_value = match table.entry(hash, |s: &String| s == "key") {
+    ///     Entry::Occupied(entry) => entry.remove(),
+    ///     Entry::Vacant(_) => unreachable!(),
+    /// };
+    /// assert_eq!(removed_value, "key");
+    /// assert!(table.is_empty());
+    /// ```
     pub fn remove(self) -> V {
         self.table.populated -= 1;
 
@@ -1222,6 +2114,40 @@ impl<'a, V> OccupiedEntry<'a, V> {
     }
 }
 
+/// An iterator over the values in a [`HashTable`].
+///
+/// This struct is created by the [`iter`] method on [`HashTable`].
+/// It yields `&V` references in an arbitrary order.
+///
+/// [`iter`]: HashTable::iter
+///
+/// # Examples
+///
+/// ```rust
+/// use std::hash::DefaultHasher;
+/// use std::hash::Hash;
+/// use std::hash::Hasher;
+///
+/// use hop_hash::HashTable;
+///
+/// fn hash_str(s: &str) -> u64 {
+///     let mut hasher = DefaultHasher::new();
+///     s.hash(&mut hasher);
+///     hasher.finish()
+/// }
+///
+/// let mut table = HashTable::with_capacity(10);
+/// table
+///     .entry(hash_str("a"), |s: &String| s == "a")
+///     .or_insert("1".to_string());
+/// table
+///     .entry(hash_str("b"), |s: &String| s == "b")
+///     .or_insert("2".to_string());
+///
+/// for value in table.iter() {
+///     println!("Value: {}", value);
+/// }
+/// ```
 pub struct Iter<'a, V> {
     table: &'a HashTable<V>,
     bucket_index: usize,
@@ -1259,6 +2185,40 @@ impl<'a, V> Iterator for Iter<'a, V> {
     }
 }
 
+/// A draining iterator over the values in a [`HashTable`].
+///
+/// This struct is created by the [`drain`] method on [`HashTable`].
+/// It yields owned `V` values and empties the table as it iterates.
+///
+/// [`drain`]: HashTable::drain
+///
+/// # Examples
+///
+/// ```rust
+/// use std::hash::DefaultHasher;
+/// use std::hash::Hash;
+/// use std::hash::Hasher;
+///
+/// use hop_hash::HashTable;
+///
+/// fn hash_str(s: &str) -> u64 {
+///     let mut hasher = DefaultHasher::new();
+///     s.hash(&mut hasher);
+///     hasher.finish()
+/// }
+///
+/// let mut table = HashTable::with_capacity(10);
+/// table
+///     .entry(hash_str("a"), |s: &String| s == "a")
+///     .or_insert("1".to_string());
+/// table
+///     .entry(hash_str("b"), |s: &String| s == "b")
+///     .or_insert("2".to_string());
+///
+/// let values: Vec<String> = table.drain().collect();
+/// assert!(table.is_empty());
+/// assert_eq!(values.len(), 2);
+/// ```
 pub struct Drain<'a, V> {
     table: &'a mut HashTable<V>,
     bucket_index: usize,
@@ -1492,8 +2452,6 @@ mod tests {
             }
         }
 
-        dbg!(&table);
-
         assert_eq!(table.len(), 100000, "{:#?}", table);
         for k in 0..100000u64 {
             let hash = hash_key(&state, k);
@@ -1584,5 +2542,170 @@ mod tests {
             let hash = hash_key(&state, k);
             assert!(table.find(hash, |v| v.key == k).is_none());
         }
+    }
+
+    #[derive(Debug, PartialEq, Eq, Clone)]
+    struct StringItem {
+        key: String,
+        value: i32,
+    }
+
+    fn hash_string_key(state: &RandomState, key: &str) -> u64 {
+        let mut h = state.build_hasher();
+        h.write(key.as_bytes());
+        h.finish()
+    }
+
+    #[test]
+    fn insert_and_find_string_keys() {
+        let state = RandomState::default();
+        let mut table: HashTable<StringItem> = HashTable::with_capacity(0);
+        let keys = ["hello", "world", "foo", "bar", "baz"];
+
+        for (i, k) in keys.iter().enumerate() {
+            let hash = hash_string_key(&state, k);
+            match table.entry(hash, |v: &StringItem| v.key == *k) {
+                Entry::Vacant(v) => {
+                    v.insert(StringItem {
+                        key: k.to_string(),
+                        value: i as i32,
+                    });
+                }
+                Entry::Occupied(_) => panic!("unexpected occupied on first insert"),
+            }
+        }
+
+        assert_eq!(table.len(), keys.len());
+
+        for (i, k) in keys.iter().enumerate() {
+            let hash = hash_string_key(&state, k);
+            assert_eq!(
+                table.find(hash, |v| v.key == *k),
+                Some(&StringItem {
+                    key: k.to_string(),
+                    value: i as i32
+                })
+            );
+        }
+
+        let miss_hash = hash_string_key(&state, "not found");
+        assert!(table.find(miss_hash, |v| v.key == "not found").is_none());
+    }
+
+    #[test]
+    fn remove_string_keys() {
+        let state = RandomState::default();
+        let mut table: HashTable<StringItem> = HashTable::with_capacity(0);
+        let keys = ["a", "b", "c", "d", "e"];
+        for (i, k) in keys.iter().enumerate() {
+            let hash = hash_string_key(&state, k);
+            match table.entry(hash, |v| v.key == *k) {
+                Entry::Vacant(v) => {
+                    v.insert(StringItem {
+                        key: k.to_string(),
+                        value: i as i32,
+                    });
+                }
+                Entry::Occupied(_) => unreachable!(),
+            }
+        }
+
+        assert_eq!(table.len(), 5);
+        let hash_c = hash_string_key(&state, "c");
+        let removed = table.remove(hash_c, |v| v.key == "c").unwrap();
+        assert_eq!(removed.key, "c");
+        assert_eq!(removed.value, 2);
+        assert_eq!(table.len(), 4);
+
+        let hash_a = hash_string_key(&state, "a");
+        assert!(table.find(hash_a, |v| v.key == "a").is_some());
+        let hash_c_2 = hash_string_key(&state, "c");
+        assert!(table.find(hash_c_2, |v| v.key == "c").is_none());
+    }
+
+    #[test]
+    fn iter_string_keys() {
+        let state = RandomState::default();
+        let mut table: HashTable<StringItem> = HashTable::with_capacity(0);
+        let keys = ["a", "b", "c"];
+        for (i, k) in keys.iter().enumerate() {
+            let hash = hash_string_key(&state, k);
+            table.entry(hash, |v| v.key == *k).or_insert(StringItem {
+                key: k.to_string(),
+                value: i as i32,
+            });
+        }
+
+        let mut found_keys = table
+            .iter()
+            .map(|item| item.key.clone())
+            .collect::<Vec<_>>();
+        found_keys.sort();
+        assert_eq!(found_keys, vec!["a", "b", "c"]);
+    }
+
+    #[test]
+    fn drain_string_keys() {
+        let state = RandomState::default();
+        let mut table: HashTable<StringItem> = HashTable::with_capacity(0);
+        let keys = ["a", "b", "c"];
+        for (i, k) in keys.iter().enumerate() {
+            let hash = hash_string_key(&state, k);
+            table.entry(hash, |v| v.key == *k).or_insert(StringItem {
+                key: k.to_string(),
+                value: i as i32,
+            });
+        }
+
+        let drained_items: Vec<String> = table.drain().map(|item| item.key).collect();
+        assert_eq!(table.len(), 0);
+        assert_eq!(drained_items.len(), 3);
+        assert!(drained_items.contains(&"a".to_string()));
+        assert!(drained_items.contains(&"b".to_string()));
+        assert!(drained_items.contains(&"c".to_string()));
+    }
+
+    #[test]
+    fn entry_or_insert_with() {
+        let state = RandomState::default();
+        let mut table: HashTable<StringItem> = HashTable::with_capacity(0);
+        let key = "unique_key";
+        let hash = hash_string_key(&state, key);
+
+        // First insertion
+        let value_ref = table
+            .entry(hash, |v| v.key == key)
+            .or_insert_with(|| StringItem {
+                key: key.to_string(),
+                value: 42,
+            });
+        assert_eq!(value_ref.value, 42);
+
+        // Attempt to insert again, should get the existing value
+        let existing_ref = table
+            .entry(hash, |v| v.key == key)
+            .or_insert_with(|| StringItem {
+                key: key.to_string(),
+                value: 100,
+            });
+        assert_eq!(existing_ref.value, 42); // Should still be the original value
+
+        assert_eq!(table.len(), 1);
+    }
+
+    #[test]
+    fn entry_into_mut() {
+        let state = RandomState::default();
+        let mut table = HashTable::with_capacity(10);
+        let hash = hash_string_key(&state, "key");
+        table
+            .entry(hash, |s: &String| s == "key")
+            .or_insert("key".to_string());
+
+        let value_ref = match table.entry(hash, |s: &String| s == "key") {
+            Entry::Occupied(entry) => entry.into_mut(),
+            Entry::Vacant(_) => unreachable!("Entry should be occupied: {:#?}", table),
+        };
+        *value_ref = "new_value".to_string();
     }
 }
