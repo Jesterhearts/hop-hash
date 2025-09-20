@@ -211,6 +211,50 @@ where
         self.table.clear();
     }
 
+    /// Shrinks the capacity of the set as much as possible.
+    ///
+    /// This method will shrink the underlying storage to fit the current number
+    /// of elements, potentially freeing unused memory. The resulting capacity
+    /// will be at least as large as the number of elements in the set, but may
+    /// be larger due to the bucket-based organization of the underlying
+    /// HashTable.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use core::hash::BuildHasher;
+    /// # use siphasher::sip::SipHasher;
+    /// #
+    /// # use hop_hash::HashSet;
+    /// #
+    /// # struct SimpleHasher;
+    /// # impl BuildHasher for SimpleHasher {
+    /// #     type Hasher = SipHasher;
+    /// #
+    /// #     fn build_hasher(&self) -> Self::Hasher {
+    /// #         SipHasher::new()
+    /// #     }
+    /// # }
+    /// #
+    /// let mut set = HashSet::with_capacity_and_hasher(100, SimpleHasher);
+    /// set.insert(1);
+    /// set.insert(2);
+    ///
+    /// // The set has a large capacity but only 2 elements
+    /// assert!(set.capacity() >= 100);
+    /// assert_eq!(set.len(), 2);
+    ///
+    /// set.shrink_to_fit();
+    ///
+    /// // The capacity is now much smaller, but still fits the elements
+    /// assert!(set.capacity() >= 2);
+    /// assert!(set.capacity() < 100);
+    /// assert_eq!(set.len(), 2);
+    /// ```
+    pub fn shrink_to_fit(&mut self) {
+        self.table.shrink_to_fit();
+    }
+
     /// Reserves capacity for at least `additional` more elements.
     pub fn reserve(&mut self, additional: usize) {
         self.table.reserve(additional);
@@ -885,7 +929,7 @@ mod tests {
         for i in 0..100 {
             let large_string = "x".repeat(1000) + &i.to_string();
             assert!(set.insert(large_string.clone()));
-            assert!(set.contains(&large_string));
+            assert!(set.contains(&large_string))
         }
 
         assert_eq!(set.len(), 100);

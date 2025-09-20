@@ -217,6 +217,50 @@ where
         self.table.clear();
     }
 
+    /// Shrinks the capacity of the map as much as possible.
+    ///
+    /// This method will shrink the underlying storage to fit the current number
+    /// of key-value pairs, potentially freeing unused memory. The resulting
+    /// capacity will be at least as large as the number of elements in the map,
+    /// but may be larger due to the bucket-based organization of the underlying
+    /// HashTable.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use core::hash::BuildHasher;
+    /// # use siphasher::sip::SipHasher;
+    /// #
+    /// # use hop_hash::HashMap;
+    /// #
+    /// # struct SimpleHasher;
+    /// # impl BuildHasher for SimpleHasher {
+    /// #     type Hasher = SipHasher;
+    /// #
+    /// #     fn build_hasher(&self) -> Self::Hasher {
+    /// #         SipHasher::new()
+    /// #     }
+    /// # }
+    /// #
+    /// let mut map = HashMap::with_capacity_and_hasher(100, SimpleHasher);
+    /// map.insert(1, "one");
+    /// map.insert(2, "two");
+    ///
+    /// // The map has a large capacity but only 2 elements
+    /// assert!(map.capacity() >= 100);
+    /// assert_eq!(map.len(), 2);
+    ///
+    /// map.shrink_to_fit();
+    ///
+    /// // The capacity is now much smaller, but still fits the elements
+    /// assert!(map.capacity() >= 2);
+    /// assert!(map.capacity() < 100);
+    /// assert_eq!(map.len(), 2);
+    /// ```
+    pub fn shrink_to_fit(&mut self) {
+        self.table.shrink_to_fit();
+    }
+
     /// Reserves capacity for at least `additional` more elements.
     pub fn reserve(&mut self, additional: usize) {
         self.table.reserve(additional);

@@ -763,6 +763,56 @@ impl<V> HashTable<V> {
         self.overflow.clear();
     }
 
+    /// Shrinks the capacity of the hash table as much as possible.
+    ///
+    /// This method will shrink the table's capacity to just fit the current
+    /// number of elements, potentially freeing up significant amounts of
+    /// memory.
+    ///
+    /// If the table is empty, it will be completely deallocated and reset to
+    /// a zero-capacity state.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use hop_hash::HashTable;
+    ///
+    /// let mut table: HashTable<i32> = HashTable::with_capacity(1000);
+    /// assert!(table.capacity() >= 1000);
+    ///
+    /// // Add a few elements
+    /// table.entry(42, |&v| v == 5).or_insert(5);
+    /// table.entry(123, |&v| v == 10).or_insert(10);
+    ///
+    /// // Shrink to fit
+    /// table.shrink_to_fit();
+    /// assert!(table.capacity() < 1000);
+    /// assert!(table.capacity() >= 2);
+    /// ```
+    pub fn shrink_to_fit(&mut self) {
+        if self.populated == 0 && self.overflow.is_empty() {
+            if self.layout.layout.size() != 0 {
+                // SAFETY: We have ensured that the allocation is valid before
+                // deallocating.
+                unsafe {
+                    alloc::alloc::dealloc(self.alloc.as_ptr(), self.layout.layout);
+                }
+                self.alloc = NonNull::dangling();
+                let new_capacity: Capacity = 0.into();
+                self.layout = DataLayout::new::<V>(new_capacity);
+                self.max_root_mask = new_capacity.max_root_mask();
+                self.max_pop = 0;
+            }
+            return;
+        }
+
+        let required = self.populated + self.overflow.len();
+        let new_capacity: Capacity = target_load_factor_inverse(required.div_ceil(16)).into();
+        if new_capacity.max_root_mask() < self.max_root_mask {
+            self.do_resize_rehash(new_capacity);
+        }
+    }
+
     /// Reserves capacity for at least `additional` more elements.
     ///
     /// The collection may reserve more space to speculatively avoid frequent
@@ -1517,7 +1567,7 @@ impl<V> HashTable<V> {
     #[inline]
     fn do_resize_rehash(&mut self, capacity: Capacity) {
         debug_assert!(
-            capacity.max_root_mask() > self.max_root_mask || self.max_root_mask == usize::MAX
+            capacity.max_root_mask() != self.max_root_mask || self.max_root_mask == usize::MAX
         );
 
         let new_layout = DataLayout::new::<V>(capacity);
@@ -3159,5 +3209,222 @@ mod tests {
 
         assert_eq!(original_item_0.value, -999);
         assert_eq!(cloned_item_0.value, 0);
+    }
+
+    #[test]
+    fn test_shrink_to_fit_empty_table() {
+        let mut table: HashTable<Item> = HashTable::with_capacity(100);
+        let initial_capacity = table.capacity();
+
+        assert!(initial_capacity > 0);
+        assert_eq!(table.len(), 0);
+
+        table.shrink_to_fit();
+
+        assert_eq!(table.len(), 0);
+        assert_eq!(table.capacity(), 0);
+    }
+
+    #[test]
+    fn test_shrink_to_fit_with_items() {
+        let state = HashState::default();
+        let mut table: HashTable<Item> = HashTable::with_capacity(1000);
+
+        for i in 0..50 {
+            let hash = hash_key(&state, i);
+            table.entry(hash, |v| v.key == i).or_insert(Item {
+                key: i,
+                value: i as i32,
+            });
+        }
+
+        let initial_capacity = table.capacity();
+        assert_eq!(table.len(), 50);
+        assert!(initial_capacity >= 1000);
+
+        table.shrink_to_fit();
+
+        assert_eq!(table.len(), 50);
+        assert!(table.capacity() < initial_capacity);
+        assert!(table.capacity() >= 50);
+
+        for i in 0..50 {
+            let hash = hash_key(&state, i);
+            let found = table.find(hash, |v| v.key == i);
+            assert!(found.is_some());
+            assert_eq!(found.unwrap().value, i as i32);
+        }
+    }
+
+    #[test]
+    fn test_shrink_to_fit_after_clear() {
+        let state = HashState::default();
+        let mut table: HashTable<Item> = HashTable::with_capacity(1000);
+
+        for i in 0..100 {
+            let hash = hash_key(&state, i);
+            table.entry(hash, |v| v.key == i).or_insert(Item {
+                key: i,
+                value: i as i32,
+            });
+        }
+
+        assert_eq!(table.len(), 100);
+        let capacity_with_items = table.capacity();
+
+        table.clear();
+        assert_eq!(table.len(), 0);
+        assert_eq!(table.capacity(), capacity_with_items);
+
+        table.shrink_to_fit();
+
+        assert_eq!(table.len(), 0);
+        assert_eq!(table.capacity(), 0);
+    }
+
+    #[test]
+    fn test_shrink_to_fit_after_removals() {
+        let state = HashState::default();
+        let mut table: HashTable<Item> = HashTable::with_capacity(1000);
+
+        for i in 0..200 {
+            let hash = hash_key(&state, i);
+            table.entry(hash, |v| v.key == i).or_insert(Item {
+                key: i,
+                value: i as i32,
+            });
+        }
+
+        assert_eq!(table.len(), 200);
+        let initial_capacity = table.capacity();
+
+        for i in 0..190 {
+            let hash = hash_key(&state, i);
+            table.remove(hash, |v| v.key == i);
+        }
+
+        assert_eq!(table.len(), 10);
+        assert_eq!(table.capacity(), initial_capacity);
+
+        table.shrink_to_fit();
+
+        assert_eq!(table.len(), 10);
+        assert!(table.capacity() < initial_capacity);
+        assert!(table.capacity() >= 10);
+
+        for i in 190..200 {
+            let hash = hash_key(&state, i);
+            let found = table.find(hash, |v| v.key == i);
+            assert!(found.is_some());
+            assert_eq!(found.unwrap().value, i as i32);
+        }
+    }
+
+    #[test]
+    fn test_shrink_to_fit_with_overflow() {
+        let state = HashState::default();
+        let mut table: HashTable<Item> = HashTable::with_capacity(100);
+
+        let mut items_with_same_hash = Vec::new();
+        let base_hash = hash_key(&state, 42);
+
+        for i in 0..50 {
+            items_with_same_hash.push(Item {
+                key: 1000 + i,
+                value: i as i32,
+            });
+        }
+
+        for item in &items_with_same_hash {
+            table
+                .entry(base_hash, |v| v.key == item.key)
+                .or_insert(item.clone());
+        }
+
+        assert_eq!(table.len(), 50);
+        let initial_capacity = table.capacity();
+
+        for i in 0..40 {
+            table.remove(base_hash, |v| v.key == 1000 + i);
+        }
+
+        assert_eq!(table.len(), 10);
+
+        table.shrink_to_fit();
+
+        assert_eq!(table.len(), 10);
+        assert!(table.capacity() <= initial_capacity);
+
+        for i in 40..50 {
+            let found = table.find(base_hash, |v| v.key == 1000 + i);
+            assert!(found.is_some());
+            assert_eq!(found.unwrap().value, i as i32);
+        }
+    }
+
+    #[test]
+    fn test_shrink_to_fit_no_change_when_optimal() {
+        let state = HashState::default();
+        let mut table: HashTable<Item> = HashTable::with_capacity(0);
+
+        // Add items gradually and call shrink_to_fit to get to optimal size
+        for i in 0..50 {
+            let hash = hash_key(&state, i);
+            table.entry(hash, |v| v.key == i).or_insert(Item {
+                key: i,
+                value: i as i32,
+            });
+        }
+
+        // First shrink to get to optimal size
+        table.shrink_to_fit();
+        let optimal_capacity = table.capacity();
+
+        // Now shrink_to_fit should not change the capacity
+        table.shrink_to_fit();
+        let capacity_after_second_shrink = table.capacity();
+
+        assert_eq!(table.len(), 50);
+        assert_eq!(optimal_capacity, capacity_after_second_shrink);
+
+        // Verify all items are still there
+        for i in 0..50 {
+            let hash = hash_key(&state, i);
+            let found = table.find(hash, |v| v.key == i);
+            assert!(found.is_some());
+            assert_eq!(found.unwrap().value, i as i32);
+        }
+    }
+
+    #[test]
+    fn test_shrink_to_fit_preserves_functionality() {
+        let state = HashState::default();
+        let mut table: HashTable<Item> = HashTable::with_capacity(500);
+
+        for i in 0..100 {
+            let hash = hash_key(&state, i);
+            table.entry(hash, |v| v.key == i).or_insert(Item {
+                key: i,
+                value: i as i32,
+            });
+        }
+
+        table.shrink_to_fit();
+
+        let new_hash = hash_key(&state, 999);
+        table.entry(new_hash, |v| v.key == 999).or_insert(Item {
+            key: 999,
+            value: 999,
+        });
+
+        assert_eq!(table.len(), 101);
+
+        let found = table.find(new_hash, |v| v.key == 999);
+        assert!(found.is_some());
+        assert_eq!(found.unwrap().value, 999);
+
+        let removed = table.remove(new_hash, |v| v.key == 999);
+        assert!(removed.is_some());
+        assert_eq!(table.len(), 100);
     }
 }
