@@ -2335,7 +2335,14 @@ impl<'a, V> Iterator for Drain<'a, V> {
 
 #[cfg(test)]
 mod tests {
+    use alloc::string::String;
+    use alloc::string::ToString;
+    use alloc::vec;
     use core::hash::Hasher;
+
+    use siphasher::sip::SipHasher;
+
+    use super::*;
 
     struct HashState {
         k0: u64,
@@ -2354,10 +2361,6 @@ mod tests {
             SipHasher::new_with_keys(self.k0, self.k1)
         }
     }
-
-    use siphasher::sip::SipHasher;
-
-    use super::*;
 
     #[derive(Debug, PartialEq, Eq)]
     struct Item {
@@ -2563,20 +2566,6 @@ mod tests {
                 }),
                 "{:#?}",
                 table
-            );
-        }
-    }
-
-    #[test]
-    fn capacity_debug() {
-        println!("=== Capacity Debug ===");
-        for requested in [16, 32, 64, 128, 256, 512, 1024] {
-            let table: HashTable<i32> = HashTable::with_capacity(requested);
-            println!(
-                "Requested: {}, Actual capacity: {}, Ratio: {:.2}%",
-                requested,
-                table.capacity(),
-                table.capacity() as f64 / requested as f64 * 100.0
             );
         }
     }
