@@ -1,0 +1,22 @@
+[package]
+name    = "hop-hash"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+default = [ "std" ]
+std     = [  ]
+
+[dependencies]
+
+[dev-dependencies]
+hashbrown = "0.16"
+criterion = "0.7.0"
+
+[profile.release-with-debug]
+debug    = true
+inherits = "release"
+
+[[bench]]
+name    = "hashtable_comparison"
+harness = false
