@@ -573,17 +573,23 @@ impl<V> HashTable<V> {
             }
         }
 
-        Entry::Vacant(self.do_vacant_lookup(hash, hop_bucket))
+        Entry::Vacant(unsafe { self.do_vacant_lookup(hash, hop_bucket) })
     }
 
-    fn do_vacant_lookup(&mut self, hash: u64, hop_bucket: usize) -> VacantEntry<'_, V> {
-        let empty_idx = self.find_next_unoccupied(self.absolute_index(hop_bucket, 0));
+    /// Perform a vacant lookup, finding or creating a suitable slot for
+    /// insertion
+    ///
+    /// # Safety
+    /// Caller must ensure that `hop_bucket` is within bounds of the hopmap
+    /// array.
+    unsafe fn do_vacant_lookup(&mut self, hash: u64, hop_bucket: usize) -> VacantEntry<'_, V> {
+        let empty_idx = unsafe { self.find_next_unoccupied(self.absolute_index(hop_bucket, 0)) };
 
         if empty_idx.is_none()
             || empty_idx.unwrap() >= self.absolute_index(self.max_root_mask + 1 + HOP_RANGE, 0)
         {
             self.do_resize_rehash();
-            return self.do_vacant_lookup(hash, self.hopmap_index(hash));
+            return unsafe { self.do_vacant_lookup(hash, self.hopmap_index(hash)) };
         }
 
         let mut absolute_empty_idx = empty_idx.unwrap();
@@ -673,7 +679,7 @@ impl<V> HashTable<V> {
                 }
 
                 self.do_resize_rehash();
-                return self.do_vacant_lookup(hash, self.hopmap_index(hash));
+                return unsafe { self.do_vacant_lookup(hash, self.hopmap_index(hash)) };
             }
         }
 
@@ -687,12 +693,20 @@ impl<V> HashTable<V> {
         }
     }
 
+    /// Check if the slot at index is occupied
+    ///
+    /// # Safety
+    /// Caller must ensure `index` is within bounds of the tags array
     #[inline(always)]
     unsafe fn is_occupied(&self, index: usize) -> bool {
         // SAFETY: Caller ensures `index` is within bounds of the tags array
         unsafe { *self.tags_ptr().as_ref().get_unchecked(index) != EMPTY }
     }
 
+    /// Clear the occupied tag at index
+    ///
+    /// # Safety
+    /// Caller must ensure `index` is within bounds of the tags array
     #[inline(always)]
     unsafe fn clear_occupied(&mut self, index: usize) {
         // SAFETY: Caller ensures `index` is within bounds of the tags array
@@ -701,6 +715,11 @@ impl<V> HashTable<V> {
         }
     }
 
+    /// Set the occupied tag at index
+    ///
+    /// # Safety
+    /// Caller must ensure `index` is within bounds of the tags array
+    /// and `tag` is a valid tag (not EMPTY)
     #[inline(always)]
     unsafe fn set_occupied(&mut self, index: usize, tag: u8) {
         // SAFETY: Caller ensures `index` is within bounds of the tags array
@@ -709,8 +728,12 @@ impl<V> HashTable<V> {
         }
     }
 
+    /// Find the next unoccupied index starting from `start`
+    ///
+    /// # Safety
+    /// Caller must ensure `start` is within bounds of the tags array
     #[inline(always)]
-    fn find_next_unoccupied(&self, start: usize) -> Option<usize> {
+    unsafe fn find_next_unoccupied(&self, start: usize) -> Option<usize> {
         // SAFETY: start is validated to be within table bounds by caller
         unsafe {
             #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
@@ -728,9 +751,13 @@ impl<V> HashTable<V> {
         }
     }
 
+    /// SSE2 optimized version of find_next_unoccupied
+    ///
+    /// # Safety
+    /// Caller must ensure `start` is within bounds of the tags array
     #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     #[inline(always)]
-    fn find_next_unoccupied_sse2(&self, start: usize) -> Option<usize> {
+    unsafe fn find_next_unoccupied_sse2(&self, start: usize) -> Option<usize> {
         use core::arch::x86_64::*;
         unsafe {
             let meta_ptr = self.tags_ptr();
