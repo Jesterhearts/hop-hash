@@ -47,9 +47,11 @@ unsafe fn find_next_movable_index(
     max_root_mask: usize,
 ) -> Option<usize> {
     for idx in bubble_base..empty_idx {
-        // SAFETY: `idx` is within bounds since it ranges from `bubble_base` to
-        // `empty_idx`, and caller guarantees both are within the hashes slice
-        // bounds
+        // SAFETY: We have validated that `idx` is within the `bubble_base..empty_idx`
+        // range. The caller guarantees `empty_idx <= hashes.len()`, ensuring
+        // `get_unchecked` is safe. Additionally, the caller ensures elements in
+        // `[bubble_base, empty_idx)` are initialized, making `assume_init_read`
+        // safe.
         unsafe {
             let hash = hashes.get_unchecked(idx).assume_init_read();
             let hopmap_index = (hash as usize & max_root_mask) * 16;
@@ -122,8 +124,9 @@ impl HopInfo {
     #[inline(always)]
     fn candidates_sse2(&self) -> u16 {
         use core::arch::x86_64::*;
-        // SAFETY: HopInfo is #[repr(C, align(16))], neighbors starts at offset 0 and
-        // is 16-byte aligned so it is safe to load via `_mm_load_si128`.
+        // SAFETY: We have ensured that `HopInfo` is `#[repr(C, align(16))]`,
+        // with `neighbors` at offset 0. This guarantees 16-byte alignment,
+        // making it safe to load via `_mm_load_si128`.
         unsafe {
             let data = _mm_load_si128(self.neighbors.as_ptr() as *const __m128i);
             let cmp = _mm_cmpgt_epi8(data, _mm_setzero_si128());
@@ -139,8 +142,9 @@ impl HopInfo {
     /// Clear neighbor count at the given index
     ///
     /// # Safety
-    /// Caller must ensure `n_index` is within bounds of the neighbors array (<
-    /// HOP_RANGE)
+    ///
+    /// The caller must ensure `n_index` is within the bounds of the neighbors
+    /// array (less than `HOP_RANGE`).
     #[inline(always)]
     unsafe fn clear(&mut self, n_index: usize) {
         // SAFETY: Caller ensures `n_index` is within bounds of the neighbors array
@@ -153,8 +157,9 @@ impl HopInfo {
     /// Set neighbor count at the given index
     ///
     /// # Safety
-    /// Caller must ensure `n_index` is within bounds of the neighbors array (<
-    /// HOP_RANGE)
+    ///
+    /// The caller must ensure `n_index` is within the bounds of the neighbors
+    /// array (less than `HOP_RANGE`).
     #[inline(always)]
     unsafe fn set(&mut self, n_index: usize) {
         // SAFETY: Caller ensures `n_index` is within bounds of the neighbors array
@@ -335,8 +340,8 @@ impl<V> Debug for HashTable<V> {
 
 impl<V> Drop for HashTable<V> {
     fn drop(&mut self) {
-        // SAFETY: All pointers are valid, allocated by this struct. Values are properly
-        // initialized before drop. We validate that we have an allocation before
+        // SAFETY: We validate that values are properly initialized before being
+        // dropped. We also validate that we have a valid allocation before
         // deallocating.
         unsafe {
             if core::mem::needs_drop::<V>() && self.populated > 0 {
@@ -378,8 +383,9 @@ impl<V> HashTable<V> {
         let alloc = if layout.layout.size() == 0 {
             NonNull::dangling()
         } else {
-            // SAFETY: Layout size is non-zero, alloc returns valid pointer and we handle
-            // alloc errors when it fails and returns null.
+            // SAFETY: We have validated that the layout size is non-zero. The `alloc`
+            // function returns a valid pointer, and we handle allocation errors
+            // if it returns null.
             unsafe {
                 let raw_alloc = alloc::alloc::alloc(layout.layout);
                 if raw_alloc.is_null() {
@@ -596,8 +602,8 @@ impl<V> HashTable<V> {
     /// assert!(table.is_empty());
     /// ```
     pub fn clear(&mut self) {
-        // SAFETY: All pointers are valid, allocated by this struct. Values are properly
-        // initialized before drop.
+        // SAFETY: We have ensured that values are properly initialized before being
+        // dropped.
         unsafe {
             if core::mem::needs_drop::<V>() && self.populated > 0 {
                 for index in find_occupied_slots(self.tags_ptr().as_ref()) {
@@ -706,16 +712,18 @@ impl<V> HashTable<V> {
         if let Some(index) = index {
             self.populated -= 1;
 
-            // SAFETY: `index` is validated to be within bounds by search_neighborhood
+            // SAFETY: We have validated that `index` is within bounds through
+            // `search_neighborhood`.
             let bucket_mut = unsafe { self.buckets_ptr().as_ref().get_unchecked(index) };
-            // SAFETY: Value at this index is initialized (confirmed by occupied tag)
+            // SAFETY: We have confirmed that the value at this index is initialized due to
+            // an occupied tag.
             let value = unsafe { bucket_mut.assume_init_read() };
 
             let offset = index - hop_bucket * 16;
             let n_index = offset / 16;
-            // SAFETY: `index` is a valid slot index returned by `search_neighborhood`.
-            // `hop_bucket` is also valid. `n_index` is calculated from these and is
-            // guaranteed to be a valid neighbor index (< HOP_RANGE).
+            // SAFETY: We have validated that `index` is a valid slot index from
+            // `search_neighborhood`, `hop_bucket` is also valid, and `n_index`
+            // is derived from these, ensuring it is a valid neighbor index.
             unsafe {
                 self.hopmap_ptr()
                     .as_mut()
@@ -799,8 +807,8 @@ impl<V> HashTable<V> {
         bucket: usize,
         eq: impl Fn(&V) -> bool,
     ) -> Option<usize> {
-        // SAFETY: `bucket` is derived from hash and max_root_mask, ensuring it's within
-        // bounds
+        // SAFETY: We have ensured that `bucket` is within bounds, as it is derived from
+        // the hash and `max_root_mask`.
         let mut neighborhood_mask = unsafe {
             self.hopmap_ptr()
                 .as_ref()
@@ -817,8 +825,8 @@ impl<V> HashTable<V> {
             neighborhood_mask &= !(1 << index);
 
             let base = bucket * 16 + index * 16;
-            // SAFETY: base is calculated from validated bucket and index within
-            // neighborhood
+            // SAFETY: We have ensured `base` is valid, calculated from a validated bucket
+            // and an index within the neighborhood.
             let tags = unsafe { self.scan_tags(base, tag) };
             if tags == 0 {
                 continue;
@@ -830,8 +838,8 @@ impl<V> HashTable<V> {
                 }
                 let slot = base + idx;
 
-                // SAFETY: `slot` is calculated from validated base and idx, ensuring it's
-                // within bounds
+                // SAFETY: We have ensured `slot` is within bounds, as it is calculated from a
+                // validated base and index.
                 if unsafe {
                     eq(self
                         .buckets_ptr()
@@ -850,12 +858,15 @@ impl<V> HashTable<V> {
     /// Scan 16 bytes starting at bucket for matching tags
     ///
     /// # Safety
-    /// Caller must ensure `bucket` is within valid range such that `bucket +
-    /// 16` is within the bounds of the tags array
+    ///
+    /// The caller must ensure `bucket` is within a valid range, such that
+    /// `bucket + 16` does not exceed the bounds of the tags array.
     #[inline(always)]
     unsafe fn scan_tags(&self, bucket: usize, tag: u8) -> u16 {
         #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
         {
+            // SAFETY: We have validated the bucket bounds, as per the requirements of
+            // `scan_tags`.
             return unsafe { self.scan_tags_sse2(bucket, tag) };
         }
 
@@ -864,8 +875,8 @@ impl<V> HashTable<V> {
             let meta_ptr = self.tags_ptr();
             let mut tags: u16 = 0;
             for i in 0..16 {
-                // SAFETY: `bucket + i` is within bounds as bucket comes from scan_tags with
-                // valid base
+                // SAFETY: We have ensured `bucket + i` is within bounds, as `bucket` is a valid
+                // base for `scan_tags`.
                 let t = unsafe { *meta_ptr.as_ref().get_unchecked(bucket + i) };
                 if t == tag {
                     tags |= 1 << i;
@@ -878,14 +889,17 @@ impl<V> HashTable<V> {
     /// SSE2 optimized version of scan_tags
     ///
     /// # Safety
-    /// Caller must ensure `bucket` is within valid range such that `bucket +
-    /// 16` is within the bounds of the tags array. Relies on EMPTY (0x80) using
-    /// the sign bit for complimentary SIMD scans elsewhere.
+    ///
+    /// The caller must ensure `bucket` is within a valid range, such that
+    /// `bucket + 16` does not exceed the bounds of the tags array. This
+    /// relies on `EMPTY` (0x80) using the sign bit for complementary SIMD
+    /// scans.
     #[inline(always)]
     #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     unsafe fn scan_tags_sse2(&self, bucket: usize, tag: u8) -> u16 {
         use core::arch::x86_64::*;
-        // SAFETY: bucket is validated to be within bounds, and we load exactly 16 bytes
+        // SAFETY: We have validated that `bucket` is within bounds, allowing for a safe
+        // load of 16 consecutive bytes.
         unsafe {
             let meta_ptr = self.tags_ptr();
             let tags_ptr = meta_ptr.as_ref().as_ptr().add(bucket);
@@ -935,6 +949,8 @@ impl<V> HashTable<V> {
             }
         }
 
+        // SAFETY: We have ensured `hop_bucket` is within bounds, as it is derived from
+        // the hash and mask.
         Entry::Vacant(unsafe { self.do_vacant_lookup(hash, hop_bucket) })
     }
 
@@ -942,19 +958,24 @@ impl<V> HashTable<V> {
     /// insertion
     ///
     /// # Safety
-    /// Caller must ensure that `hop_bucket` is within bounds of the hopmap
-    /// array.
+    ///
+    /// The caller must ensure that `hop_bucket` is within the bounds of the
+    /// hopmap array.
     unsafe fn do_vacant_lookup(&mut self, hash: u64, hop_bucket: usize) -> VacantEntry<'_, V> {
+        debug_assert!(hop_bucket <= self.max_root_mask);
         let empty_idx = unsafe { self.find_next_unoccupied(self.absolute_index(hop_bucket, 0)) };
 
         if empty_idx.is_none()
             || empty_idx.unwrap() >= self.absolute_index(self.max_root_mask + 1 + HOP_RANGE, 0)
         {
             self.resize_rehash();
+            // SAFETY: We have ensured `hop_bucket` is within the hopmap bounds.
             return unsafe { self.do_vacant_lookup(hash, self.hopmap_index(hash)) };
         }
 
         let mut absolute_empty_idx = empty_idx.unwrap();
+        // SAFETY: We have validated `absolute_empty_idx` through
+        // `find_next_unoccupied`.
         debug_assert!(unsafe { !self.is_occupied(absolute_empty_idx) });
 
         if absolute_empty_idx < self.absolute_index(hop_bucket + HOP_RANGE, 0) {
@@ -970,6 +991,8 @@ impl<V> HashTable<V> {
         while absolute_empty_idx >= self.absolute_index(hop_bucket + HOP_RANGE, 0) {
             let bubble_base = absolute_empty_idx - (HOP_RANGE - 1) * 16;
 
+            // SAFETY: We have ensured that `bubble_base` and `absolute_empty_idx` are
+            // within the table bounds.
             if let Some(absolute_idx) = unsafe {
                 find_next_movable_index(
                     self.hashes_ptr().as_ref(),
@@ -978,6 +1001,8 @@ impl<V> HashTable<V> {
                     self.max_root_mask,
                 )
             } {
+                // SAFETY: We have validated `absolute_idx` through `find_next_movable_index`,
+                // ensuring it is within bounds.
                 unsafe {
                     let moved_hash = self
                         .hashes_ptr()
@@ -1009,10 +1034,10 @@ impl<V> HashTable<V> {
                     let new_off_abs = absolute_empty_idx - hopmap_abs_idx;
                     let new_n_index = new_off_abs / 16;
 
-                    // SAFETY: `find_next_movable_index` ensures that the moved element is within
-                    // the hop-neighborhood of its `hopmap_root`. `absolute_empty_idx` is also
-                    // within this neighborhood. Therefore, `old_n_index` and `new_n_index` are
-                    // valid neighbor indices (< HOP_RANGE).
+                    // SAFETY: We have ensured through `find_next_movable_index` that the moved
+                    // element is within the hop-neighborhood of its
+                    // `hopmap_root`. `absolute_empty_idx` is also within this
+                    // neighborhood, making `old_n_index` and `new_n_index` valid neighbor indices.
                     self.hopmap_ptr()
                         .as_mut()
                         .get_unchecked_mut(hopmap_root)
@@ -1027,6 +1052,7 @@ impl<V> HashTable<V> {
                     absolute_empty_idx = absolute_idx;
                 }
             } else {
+                // SAFETY: We have ensured `hop_bucket` is within hopmap bounds.
                 let is_full = unsafe {
                     self.hopmap_ptr()
                         .as_ref()
@@ -1044,10 +1070,13 @@ impl<V> HashTable<V> {
                 }
 
                 self.resize_rehash();
+                // SAFETY: We have ensured `hop_bucket` is within the hopmap bounds.
                 return unsafe { self.do_vacant_lookup(hash, self.hopmap_index(hash)) };
             }
         }
 
+        // SAFETY: We have validated `absolute_empty_idx` through
+        // `find_next_unoccupied`.
         debug_assert!(unsafe { !self.is_occupied(absolute_empty_idx) });
         VacantEntry {
             n_index: absolute_empty_idx - hop_bucket * 16,
@@ -1061,7 +1090,8 @@ impl<V> HashTable<V> {
     /// Check if the slot at index is occupied
     ///
     /// # Safety
-    /// Caller must ensure `index` is within bounds of the tags array
+    ///
+    /// The caller must ensure `index` is within the bounds of the tags array.
     #[inline(always)]
     unsafe fn is_occupied(&self, index: usize) -> bool {
         // SAFETY: Caller ensures `index` is within bounds of the tags array
@@ -1071,7 +1101,8 @@ impl<V> HashTable<V> {
     /// Clear the occupied tag at index
     ///
     /// # Safety
-    /// Caller must ensure `index` is within bounds of the tags array
+    ///
+    /// The caller must ensure `index` is within the bounds of the tags array.
     #[inline(always)]
     unsafe fn clear_occupied(&mut self, index: usize) {
         // SAFETY: Caller ensures `index` is within bounds of the tags array
@@ -1083,8 +1114,9 @@ impl<V> HashTable<V> {
     /// Set the occupied tag at index
     ///
     /// # Safety
-    /// Caller must ensure `index` is within bounds of the tags array
-    /// and `tag` is a valid tag (not EMPTY)
+    ///
+    /// The caller must ensure `index` is within the bounds of the tags array
+    /// and that `tag` is a valid tag (not `EMPTY`).
     #[inline(always)]
     unsafe fn set_occupied(&mut self, index: usize, tag: u8) {
         // SAFETY: Caller ensures `index` is within bounds of the tags array
@@ -1097,7 +1129,8 @@ impl<V> HashTable<V> {
     /// Find the next unoccupied index starting from `start`
     ///
     /// # Safety
-    /// Caller must ensure `start` is within bounds of the tags array
+    ///
+    /// The caller must ensure `start` is within the bounds of the tags array.
     #[inline(always)]
     unsafe fn find_next_unoccupied(&self, start: usize) -> Option<usize> {
         // SAFETY: start is validated to be within table bounds by caller
@@ -1120,9 +1153,11 @@ impl<V> HashTable<V> {
     /// SSE2 optimized version of find_next_unoccupied
     ///
     /// # Safety
-    /// Caller must ensure `start` is within bounds of the tags array. Relies on
-    /// EMPTY (0x80) having the sign bit set so movemask finds empties. Performs
-    /// unaligned loads guarded by bounds checks.
+    ///
+    /// The caller must ensure `start` is within the bounds of the tags array.
+    /// This relies on `EMPTY` (0x80) having the sign bit set for `movemask`
+    /// to find empty slots. Unaligned loads are performed but guarded by
+    /// bounds checks.
     #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     #[inline(always)]
     unsafe fn find_next_unoccupied_sse2(&self, start: usize) -> Option<usize> {
@@ -1203,6 +1238,8 @@ impl<V> HashTable<V> {
         let bucket = self.hopmap_index(hash);
         let index = self.search_neighborhood(hash, bucket, &eq);
         if let Some(index) = index {
+            // SAFETY: We have validated `index` through `search_neighborhood`, and the
+            // bucket is confirmed to be initialized by an occupied tag.
             return Some(unsafe {
                 self.buckets_ptr()
                     .as_ref()
@@ -1272,6 +1309,8 @@ impl<V> HashTable<V> {
         let bucket = self.hopmap_index(hash);
 
         if let Some(index) = self.search_neighborhood(hash, bucket, &eq) {
+            // SAFETY: We have validated `index` through `search_neighborhood`, and the
+            // bucket is confirmed to be initialized by an occupied tag.
             return Some(unsafe {
                 self.buckets_ptr()
                     .as_mut()
@@ -1313,6 +1352,7 @@ impl<V> HashTable<V> {
         );
 
         let new_layout = DataLayout::new::<V>(capacity);
+        // SAFETY: layout.layout validated non-zero size, alloc failure handled
         let new_alloc = unsafe {
             let raw_alloc = alloc::alloc::alloc(new_layout.layout);
             if raw_alloc.is_null() {
@@ -1335,6 +1375,8 @@ impl<V> HashTable<V> {
         self.max_pop = ((capacity.max_root_mask().wrapping_add(1) * 16) as u128 * 15 / 16) as usize;
         self.max_root_mask = capacity.max_root_mask();
         if self.populated == 0 {
+            // SAFETY: old_layout.layout.size() checked non-zero, old_alloc from valid
+            // allocation
             unsafe {
                 if old_layout.layout.size() != 0 {
                     alloc::alloc::dealloc(old_alloc.as_ptr(), old_layout.layout);
@@ -1344,6 +1386,7 @@ impl<V> HashTable<V> {
             return;
         }
         let overflows = core::mem::take(&mut self.overflow);
+        // SAFETY: old_alloc valid, old_empty_words calculated from valid old capacity
         let old_emptymap: NonNull<[u8]> = unsafe {
             NonNull::slice_from_raw_parts(
                 old_alloc.add(old_layout.tags_offset).cast(),
@@ -1363,11 +1406,13 @@ impl<V> HashTable<V> {
             )
         };
 
+        // SAFETY: Moving initialized values from old table, pointers valid from
+        // allocation
         unsafe {
             // Ownership note: We move values (V) and hashes (u64) out of the old
-            // allocation into the new one using assume_init_read() + write().
-            // The old allocation is then deallocated without running destructors
-            // for moved-out contents; only the new table will drop values.
+            // allocation into the new one. The old allocation is then deallocated without
+            // running destructors for moved-out contents; only the new table will drop
+            // values.
             self.populated = 0;
 
             let old_populated = find_occupied_slots(old_emptymap.as_ref());
@@ -1533,6 +1578,7 @@ impl Iterator for Sse2FindOccupiedIter {
 
     fn next(&mut self) -> Option<Self::Item> {
         use core::arch::x86_64::*;
+        // SAFETY: meta_ptr valid, bounds checked in loop, SIMD ops on aligned data
         unsafe {
             loop {
                 if self.bit_mask != 0 {
@@ -1857,11 +1903,14 @@ impl<'a, V> VacantEntry<'a, V> {
             return self.insert_overflow(value);
         }
 
+        // SAFETY: absolute_index validated during vacant lookup, n_index < HOP_RANGE
         unsafe {
+            // SAFETY: `self.n_index` is an offset from the root bucket, guaranteed
+            // to be in the hop-neighborhood by `do_vacant_lookup`. Thus, `neighbor`
+            // is a valid index (< HOP_RANGE), and `target_index` is a valid,
+            // unoccupied slot within bounds.
             let neighbor = self.n_index / 16;
-            // SAFETY: `self.n_index` is the offset from the root bucket, and is
-            // guaranteed to be within the hop-neighborhood by `do_vacant_lookup`.
-            // Therefore, `neighbor` will be a valid neighbor index (< HOP_RANGE).
+            debug_assert!(neighbor < HOP_RANGE);
             self.table
                 .hopmap_ptr()
                 .as_mut()
@@ -1940,9 +1989,11 @@ impl<'a, V> OccupiedEntry<'a, V> {
     /// ```
     pub fn get(&self) -> &V {
         if let Some(overflow_index) = self.overflow_index {
+            // SAFETY: overflow_index validated when Some, within overflow vec bounds
             return unsafe { &self.table.overflow.get_unchecked(overflow_index).1 };
         }
 
+        // SAFETY: absolute_index validated during lookup, bucket confirmed initialized
         unsafe {
             self.table
                 .buckets_ptr()
@@ -1985,9 +2036,11 @@ impl<'a, V> OccupiedEntry<'a, V> {
     /// ```
     pub fn get_mut(&mut self) -> &mut V {
         if let Some(overflow_index) = self.overflow_index {
+            // SAFETY: overflow_index validated when Some, within overflow vec bounds
             return unsafe { &mut self.table.overflow.get_unchecked_mut(overflow_index).1 };
         }
 
+        // SAFETY: absolute_index validated during lookup, bucket confirmed initialized
         unsafe {
             self.table
                 .buckets_ptr()
@@ -2030,9 +2083,11 @@ impl<'a, V> OccupiedEntry<'a, V> {
     /// ```
     pub fn into_mut(self) -> &'a mut V {
         if let Some(overflow_index) = self.overflow_index {
+            // SAFETY: overflow_index validated when Some, within overflow vec bounds
             return unsafe { &mut self.table.overflow.get_unchecked_mut(overflow_index).1 };
         }
 
+        // SAFETY: absolute_index validated during lookup, bucket confirmed initialized
         unsafe {
             self.table
                 .buckets_ptr()
@@ -2081,6 +2136,7 @@ impl<'a, V> OccupiedEntry<'a, V> {
             return value;
         }
 
+        // SAFETY: absolute_index validated during lookup, value confirmed initialized
         unsafe {
             let bucket_mut = self
                 .table
@@ -2150,6 +2206,8 @@ impl<'a, V> Iterator for Iter<'a, V> {
     type Item = &'a V;
 
     fn next(&mut self) -> Option<Self::Item> {
+        // SAFETY: slot_index bounds checked, values confirmed initialized by occupied
+        // tags
         unsafe {
             let total_slots = (self.table.max_root_mask.wrapping_add(1) + HOP_RANGE) * 16;
             while self.bucket_index < total_slots {
@@ -2226,6 +2284,8 @@ impl<'a, V> Iterator for Drain<'a, V> {
     type Item = V;
 
     fn next(&mut self) -> Option<Self::Item> {
+        // SAFETY: slot_index bounds checked, values confirmed initialized by occupied
+        // tags
         unsafe {
             let total_slots = (self.table.max_root_mask.wrapping_add(1) + HOP_RANGE) * 16;
             while self.bucket_index < total_slots {
