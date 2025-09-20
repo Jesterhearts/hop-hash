@@ -5,6 +5,25 @@ use core::fmt::Debug;
 use core::mem::MaybeUninit;
 use core::ptr::NonNull;
 
+#[inline(always)]
+fn target_load_factor(capacity: usize) -> usize {
+    ((capacity as u128 * 99) / 100) as usize
+}
+
+#[inline(always)]
+fn target_load_factor_inverse(capacity: usize) -> usize {
+    ((capacity as u128 * 100) / 99) as usize
+}
+
+#[inline(always)]
+fn prefetch<T>(ptr: *const T) {
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+    unsafe {
+        use core::arch::x86_64::*;
+        _mm_prefetch(ptr as *const i8, _MM_HINT_T0);
+    }
+}
+
 /// Special tag value marking an empty slot.
 ///
 /// Chosen as 0x80 (sign bit set) so SSE2 `movemask`-based scans can leverage
@@ -467,8 +486,7 @@ impl<V> HashTable<V> {
     /// Creates a new hash table with the specified capacity.
     ///
     /// The actual capacity may be larger than requested due to the bucket-based
-    /// organization. The table will not resize until the load factor exceeds
-    /// 93.75%.
+    /// organization.
     ///
     /// # Examples
     ///
@@ -480,7 +498,7 @@ impl<V> HashTable<V> {
     /// assert!(table.capacity() >= 100);
     /// ```
     pub fn with_capacity(capacity: usize) -> Self {
-        let capacity: Capacity = ((capacity.div_ceil(16) as u128 * 16 / 15) as usize).into();
+        let capacity: Capacity = target_load_factor_inverse(capacity.div_ceil(16)).into();
 
         let layout = DataLayout::new::<V>(capacity);
         let alloc = if layout.layout.size() == 0 {
@@ -511,7 +529,7 @@ impl<V> HashTable<V> {
             alloc,
             overflow: Vec::new(),
             populated: 0,
-            max_pop: ((capacity.max_root_mask().wrapping_add(1) * 16) as u128 * 15 / 16) as usize,
+            max_pop: target_load_factor(capacity.max_root_mask().wrapping_add(1) * 16),
             max_root_mask: capacity.max_root_mask(),
             _phantom: core::marker::PhantomData,
         }
@@ -775,8 +793,7 @@ impl<V> HashTable<V> {
     pub fn reserve(&mut self, additional: usize) {
         let required = self.populated.saturating_add(additional);
         if required > self.max_pop {
-            let new_capacity: Capacity =
-                ((required.div_ceil(16) as u128 * 16 / 15) as usize).into();
+            let new_capacity: Capacity = target_load_factor_inverse(required.div_ceil(16)).into();
             self.do_resize_rehash(new_capacity);
         }
     }
@@ -825,7 +842,9 @@ impl<V> HashTable<V> {
         }
 
         let hop_bucket = self.hopmap_index(hash);
-        let index = self.search_neighborhood(hash, hop_bucket, &eq);
+        // SAFETY: We have validated that `hop_bucket` is within bounds through
+        // `hopmap_index`, which derives it from the hash and `max_root_mask`.
+        let index = unsafe { self.search_neighborhood(hash, hop_bucket, &eq) };
         if let Some(index) = index {
             self.populated -= 1;
 
@@ -917,14 +936,24 @@ impl<V> HashTable<V> {
         self.entry_impl(hash, eq)
     }
 
+    /// Search the neighborhood of a given bucket for a matching value.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that `bucket` is within the valid range of
+    /// buckets, derived from the hash and `max_root_mask`.
     #[inline]
-    fn search_neighborhood(
+    unsafe fn search_neighborhood(
         &self,
         hash: u64,
         bucket: usize,
         eq: impl Fn(&V) -> bool,
     ) -> Option<usize> {
-        // SAFETY: We have ensured that `bucket` is within bounds, as it is derived from
+        // SAFETY: Caller ensures that `bucket` is within bounds, as it is derived from
+        // the hash and `max_root_mask`.
+        unsafe { prefetch(self.tags_ptr().as_ref().as_ptr().add(bucket * 16)) };
+
+        // SAFETY: Caller ensures that `bucket` is within bounds, as it is derived from
         // the hash and `max_root_mask`.
         let mut neighborhood_mask = unsafe {
             self.hopmap_ptr()
@@ -932,9 +961,6 @@ impl<V> HashTable<V> {
                 .get_unchecked(bucket)
                 .candidates()
         };
-        if neighborhood_mask == 0 {
-            return None;
-        }
 
         let tag = hashtag(hash);
         while neighborhood_mask != 0 {
@@ -1043,7 +1069,9 @@ impl<V> HashTable<V> {
     fn entry_impl(&mut self, hash: u64, eq: impl Fn(&V) -> bool) -> Entry<'_, V> {
         let hop_bucket = self.hopmap_index(hash);
 
-        let index = self.search_neighborhood(hash, hop_bucket, &eq);
+        // SAFETY: We have ensured that `hop_bucket` is within bounds, as it is derived
+        // from the hash and mask.
+        let index = unsafe { self.search_neighborhood(hash, hop_bucket, &eq) };
         if let Some(index) = index {
             return Entry::Occupied(OccupiedEntry {
                 n_index: index - hop_bucket * 16,
@@ -1361,7 +1389,9 @@ impl<V> HashTable<V> {
         }
 
         let bucket = self.hopmap_index(hash);
-        let index = self.search_neighborhood(hash, bucket, &eq);
+        // SAFETY: We have ensured that `bucket` is within bounds through
+        // `hopmap_index`, which derives it from the hash and `max_root_mask`.
+        let index = unsafe { self.search_neighborhood(hash, bucket, &eq) };
         if let Some(index) = index {
             // SAFETY: We have validated `index` through `search_neighborhood`, and the
             // bucket is confirmed to be initialized by an occupied tag.
@@ -1439,7 +1469,9 @@ impl<V> HashTable<V> {
 
         let bucket = self.hopmap_index(hash);
 
-        if let Some(index) = self.search_neighborhood(hash, bucket, &eq) {
+        // SAFETY: We have ensured that `bucket` is within bounds through
+        // `hopmap_index`, which derives it from the hash and `max_root_mask`.
+        if let Some(index) = unsafe { self.search_neighborhood(hash, bucket, &eq) } {
             // SAFETY: We have validated `index` through `search_neighborhood`, and the
             // bucket is confirmed to be initialized by an occupied tag.
             return Some(unsafe {
@@ -1509,7 +1541,7 @@ impl<V> HashTable<V> {
         let old_max_root = self.max_root_mask.wrapping_add(1);
         let old_base = old_max_root + HOP_RANGE;
         let old_empty_words = old_base * 16;
-        self.max_pop = ((capacity.max_root_mask().wrapping_add(1) * 16) as u128 * 15 / 16) as usize;
+        self.max_pop = target_load_factor(capacity.max_root_mask().wrapping_add(1) * 16);
         self.max_root_mask = capacity.max_root_mask();
         if self.populated == 0 {
             // SAFETY: old_layout.layout.size() checked non-zero, old_alloc from valid
@@ -1677,7 +1709,7 @@ impl<V> HashTable<V> {
     ///
     /// # Load Factor
     ///
-    /// The table maintains a load factor of approximately 93.75% (15/16) before
+    /// The table maintains a load factor of approximately 99% before
     /// triggering a resize operation.
     pub fn capacity(&self) -> usize {
         self.max_pop
@@ -1743,7 +1775,6 @@ impl<V> HashTable<V> {
         if total_slots > 0 {
             // SAFETY: Valid allocation and bounds checked
             unsafe {
-                // Count occupied slots
                 for i in 0..total_slots {
                     if self.is_occupied(i) {
                         occupied_slots += 1;

@@ -52,7 +52,7 @@ failing:
 
 - **Memory Overhead**: 2 bytes per entry for the tags + hop info. This implementation also stores
   full hash values, adding 8 bytes per entry.
-- **Load Factor**: Maintains ~93.75% occupancy (15/16)
+- **Load Factor**: Targets a load factor of 99%.
 
 ## Implementation Details
 
@@ -95,8 +95,10 @@ Performance is highly dependent on hash function quality. Poor hash functions ca
 - Degraded performance
 
 ### Memory Usage
-- Not suitable for very small tables (< 16x16 entries)
+- Not suitable for small tables, as it reserves space for an extra 16x16 buckets at a minimum above
+  the required capacity (although it does not alloc for size zero).
 - Memory usage grows in powers of 2
+- Targets a load factor of 99%
 
 ### Key Constraints
 - Equality function must be consistent with hash
