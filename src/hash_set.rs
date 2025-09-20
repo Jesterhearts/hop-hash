@@ -1,3 +1,4 @@
+use core::fmt::Debug;
 use core::hash::BuildHasher;
 use core::hash::Hash;
 
@@ -13,14 +14,22 @@ use crate::hash_table::HashTable;
 ///
 /// # Performance Characteristics
 ///
-/// - **Insert**: O(1) average, O(1) worst case (bounded by neighborhood size)
-/// - **Lookup**: O(1) average, O(N) worst case (typically 16 probes)
-/// - **Remove**: O(1) average, O(N) worst case
 /// - **Memory**: 2 bytes per entry overhead, plus the size of `T` plus a u64
 ///   for the hash
+#[derive(Clone)]
 pub struct HashSet<T, S> {
     table: HashTable<T>,
     hash_builder: S,
+}
+
+impl<T, S> Debug for HashSet<T, S>
+where
+    T: Debug + Hash + Eq,
+    S: BuildHasher,
+{
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_set().entries(self.iter()).finish()
+    }
 }
 
 impl<T, S> HashSet<T, S>

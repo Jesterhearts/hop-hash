@@ -1,3 +1,4 @@
+use core::fmt::Debug;
 use core::hash::BuildHasher;
 use core::hash::Hash;
 
@@ -14,14 +15,27 @@ use crate::hash_table::HashTable;
 ///
 /// # Performance Characteristics
 ///
-/// - **Insert**: O(1) average, O(1) worst case (bounded by neighborhood size)
-/// - **Lookup**: O(1) average, O(N) worst case (typically 16 probes)
-/// - **Remove**: O(1) average, O(N) worst case
 /// - **Memory**: 2 bytes per entry overhead, plus the size of `(K, V)` plus a
 ///   u64 for the hash
+#[derive(Clone)]
 pub struct HashMap<K, V, S> {
     table: HashTable<(K, V)>,
     hash_builder: S,
+}
+
+impl<K, V, S> Debug for HashMap<K, V, S>
+where
+    K: Debug + Hash + Eq,
+    V: Debug,
+    S: BuildHasher,
+{
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let mut map = f.debug_map();
+        for (k, v) in self.iter() {
+            map.entry(k, v);
+        }
+        map.finish()
+    }
 }
 
 impl<K, V, S> HashMap<K, V, S>

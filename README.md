@@ -48,15 +48,6 @@ failing:
 
 ## Performance Characteristics
 
-### Time Complexity
-
-| Operation | Average Case | Worst Case |
-| --------- | ------------ | ---------- |
-| Insert    | O(1)         | O(1)       |
-| Lookup    | O(1)         | O(N)       |
-| Remove    | O(1)         | O(N)       |
-
-
 ### Space Complexity
 
 - **Memory Overhead**: 2 bytes per entry for the tags + hop info. This implementation also stores

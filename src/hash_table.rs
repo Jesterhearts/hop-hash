@@ -211,11 +211,6 @@ impl DataLayout {
 ///
 /// ## Performance Characteristics
 ///
-/// - **Lookup**: O(1) average, O(N) worst case (typically 16 probes, but with a
-///   degenerate hash function you could end up with everything in the overflow,
-///   making it O(N))
-/// - **Insert**: O(1) average, O(1) worst case (bounded by neighborhood size)
-/// - **Remove**: O(1) average, O(N) worst case
 /// - **Memory**: 2 bytes per entry overhead, plus the size of `V` plus a u64
 ///   for the hash.
 ///
@@ -330,6 +325,58 @@ impl<V> Debug for HashTable<V> {
                 .field("capacity", &self.max_pop)
                 .field("has_overflow", &self.overflow.len())
                 .finish()
+        }
+    }
+}
+
+impl<V> Clone for HashTable<V>
+where
+    V: Clone,
+{
+    fn clone(&self) -> Self {
+        let mut new_table = Self::with_capacity(self.max_pop);
+
+        // SAFETY: We have ensured that both tables have valid allocations and
+        // the same capacity.
+        unsafe {
+            let src_buckets = self.buckets_ptr().as_ref();
+            let dst_buckets = new_table.buckets_ptr().as_mut();
+            let src_hashes = self.hashes_ptr().as_ref();
+            let dst_hashes = new_table.hashes_ptr().as_mut();
+            let src_tags = self.tags_ptr().as_ref();
+            let dst_tags = new_table.tags_ptr().as_mut();
+
+            for i in 0..src_tags.len() {
+                let tag = *src_tags.get_unchecked(i);
+                *dst_tags.get_unchecked_mut(i) = tag;
+
+                if tag != EMPTY {
+                    let value = src_buckets.get_unchecked(i).assume_init_ref().clone();
+                    let hash = src_hashes.get_unchecked(i).assume_init_read();
+                    *dst_buckets.get_unchecked_mut(i) = MaybeUninit::new(value);
+                    *dst_hashes.get_unchecked_mut(i) = MaybeUninit::new(hash);
+                    new_table.populated += 1;
+
+                    let hop_bucket = (hash as usize & new_table.max_root_mask) * 16;
+                    let offset = i - hop_bucket;
+                    let n_index = offset / 16;
+                    // SAFETY: We have validated that `i` is a valid slot index from
+                    // `hop_bucket` is also valid, and `n_index` is derived from
+                    // `offset` which is guaranteed to be less than `HOP_RANGE * 16`
+                    new_table
+                        .hopmap_ptr()
+                        .as_mut()
+                        .get_unchecked_mut(hop_bucket / 16)
+                        .set(n_index);
+
+                    debug_assert!(new_table.populated <= new_table.max_pop);
+                }
+            }
+            new_table.overflow = self.overflow.clone();
+
+            debug_assert!(new_table.populated == self.populated);
+
+            new_table
         }
     }
 }
@@ -1924,7 +1971,7 @@ impl<'a, V> VacantEntry<'a, V> {
     /// it.
     ///
     /// The value is inserted at the position determined by the hash and
-    /// hopscotch algorithm. This operation has O(1) complexity.
+    /// hopscotch algorithm.
     ///
     /// # Examples
     ///
@@ -2430,7 +2477,7 @@ mod tests {
         }
     }
 
-    #[derive(Debug, PartialEq, Eq)]
+    #[derive(Debug, PartialEq, Eq, Clone)]
     struct Item {
         key: u64,
         value: i32,
@@ -2853,5 +2900,112 @@ mod tests {
         }
 
         table.print_probe_histogram();
+    }
+
+    #[test]
+    fn test_clone() {
+        let state = HashState::default();
+        let mut original: HashTable<StringItem> = HashTable::with_capacity(10);
+
+        let test_data = [
+            ("hello", 1),
+            ("world", 2),
+            ("rust", 3),
+            ("clone", 4),
+            ("test", 5),
+        ];
+
+        for (key, value) in test_data.iter() {
+            let hash = hash_string_key(&state, key);
+            original
+                .entry(hash, |v| v.key == *key)
+                .or_insert(StringItem {
+                    key: key.to_string(),
+                    value: *value,
+                });
+        }
+
+        let cloned = original.clone();
+
+        assert_eq!(original.len(), cloned.len());
+        assert_eq!(cloned.len(), test_data.len());
+
+        for (key, expected_value) in test_data.iter() {
+            let hash = hash_string_key(&state, key);
+
+            let original_item = original.find(hash, |v| v.key == *key).unwrap();
+            assert_eq!(original_item.value, *expected_value);
+
+            let cloned_item = cloned.find(hash, |v| v.key == *key).unwrap();
+            assert_eq!(cloned_item.value, *expected_value);
+            assert_eq!(cloned_item.key, *key);
+        }
+
+        let hash = hash_string_key(&state, "hello");
+        if let Some(item) = original.find_mut(hash, |v| v.key == "hello") {
+            item.value = 999;
+        }
+
+        let original_hello = original.find(hash, |v| v.key == "hello").unwrap();
+        assert_eq!(original_hello.value, 999);
+
+        let cloned_hello = cloned.find(hash, |v| v.key == "hello").unwrap();
+        assert_eq!(cloned_hello.value, 1);
+    }
+
+    #[test]
+    fn test_clone_empty_table() {
+        let original: HashTable<Item> = HashTable::with_capacity(10);
+        let cloned = original.clone();
+
+        assert_eq!(original.len(), 0);
+        assert_eq!(cloned.len(), 0);
+        assert!(original.is_empty());
+        assert!(cloned.is_empty());
+    }
+
+    #[test]
+    fn test_clone_with_overflow() {
+        let mut table: HashTable<Item> = HashTable::with_capacity(16);
+
+        let hash = 0u64;
+
+        let num_items = 200u64;
+        for k in 0..num_items {
+            match table.entry(hash, |v| v.key == k) {
+                Entry::Vacant(v) => {
+                    v.insert(Item {
+                        key: k,
+                        value: k as i32,
+                    });
+                }
+                _ => unreachable!(),
+            }
+        }
+
+        let cloned = table.clone();
+
+        assert_eq!(table.len(), cloned.len());
+        assert_eq!(table.len(), num_items as usize);
+
+        for k in 0..num_items {
+            let original_item = table.find(hash, |v| v.key == k).unwrap();
+            let cloned_item = cloned.find(hash, |v| v.key == k).unwrap();
+
+            assert_eq!(original_item.key, k);
+            assert_eq!(cloned_item.key, k);
+            assert_eq!(original_item.value, k as i32);
+            assert_eq!(cloned_item.value, k as i32);
+        }
+
+        if let Some(item) = table.find_mut(hash, |v| v.key == 0) {
+            item.value = -999;
+        }
+
+        let original_item_0 = table.find(hash, |v| v.key == 0).unwrap();
+        let cloned_item_0 = cloned.find(hash, |v| v.key == 0).unwrap();
+
+        assert_eq!(original_item_0.value, -999);
+        assert_eq!(cloned_item_0.value, 0);
     }
 }

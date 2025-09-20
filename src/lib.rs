@@ -42,9 +42,6 @@ pub mod hash_map;
 ///
 /// ## Performance Characteristics
 ///
-/// - **Lookup**: O(1) average, O(N) worst case (typically <=16 probes)
-/// - **Insert**: O(1) average, O(1) worst case (bounded by neighborhood size)
-/// - **Remove**: O(1) average, O(N) worst case
 /// - **Memory overhead**: 2 bytes per slot plus hash storage
 ///
 /// ## When to Use
