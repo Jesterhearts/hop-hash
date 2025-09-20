@@ -1537,6 +1537,99 @@ impl<V> HashTable<V> {
     pub fn capacity(&self) -> usize {
         self.max_pop
     }
+
+    /// Computes a histogram of probe lengths for the current table state.
+    ///
+    /// Test-only: compiled only with `cfg(test)`.
+    ///
+    /// Definition of probe length used here:
+    /// - For each occupied slot in the table, we compute the distance from its
+    ///   root bucket as `n_index = (absolute_index - root*16) / 16`, which is
+    ///   always in `0..HOP_RANGE` for in-table entries. This corresponds to the
+    ///   hop-neighborhood index tracked by the hopmap.
+    /// - All overflowed entries (stored in the overflow vector) are counted in
+    ///   an extra bin at index `HOP_RANGE`.
+    ///
+    /// Returns a vector of length `HOP_RANGE + 1` where indices
+    /// `0..HOP_RANGE-1` represent in-table probe lengths, and index
+    /// `HOP_RANGE` represents overflow entries.
+    #[cfg(test)]
+    pub fn probe_histogram(&self) -> alloc::vec::Vec<usize> {
+        let mut hist = alloc::vec![0usize; HOP_RANGE + 1];
+
+        if self.populated == 0 {
+            return hist;
+        }
+
+        // SAFETY: All pointer/slice accesses obey table bounds; occupied slots
+        // are identified by tags, and corresponding hashes are initialized.
+        unsafe {
+            for idx in find_occupied_slots(self.tags_ptr().as_ref()) {
+                let hash = self.hashes_ptr().as_ref()[idx].assume_init_read();
+                let root = self.hopmap_index(hash);
+                let off = idx - root * 16;
+                let n_index = off / 16;
+                hist[n_index] += 1;
+            }
+
+            hist[HOP_RANGE] += self.overflow.len();
+        }
+
+        hist
+    }
+
+    /// Pretty-prints the probe-length histogram horizontally using stdout.
+    ///
+    /// Test-only, requires the `std` feature. Produces a horizontal bar chart.
+    /// Each row corresponds to a probe-length bin (0..HOP_RANGE-1), plus an
+    /// "OF" row for overflows.
+    #[cfg(all(test, feature = "std"))]
+    pub fn print_probe_histogram(&self) {
+        let hist = self.probe_histogram();
+        let max = *hist.iter().max().unwrap_or(&0);
+        if max == 0 {
+            println!("probe histogram: empty");
+            return;
+        }
+
+        let max_bar = 60usize;
+        let total_units = max_bar * 8;
+        println!("probe histogram ({} entries):", self.populated);
+
+        let make_bar = |count: usize| -> alloc::string::String {
+            if count == 0 || max == 0 {
+                return alloc::string::String::new();
+            }
+            let units = ((count as u128 * total_units as u128).div_ceil(max as u128)) as usize;
+            let full = units / 8;
+            let rem = units % 8;
+            let mut bar = "█".repeat(full);
+            if rem > 0 {
+                let ch = match rem {
+                    1 => '▏',
+                    2 => '▎',
+                    3 => '▍',
+                    4 => '▌',
+                    5 => '▋',
+                    6 => '▊',
+                    7 => '▉',
+                    _ => unreachable!(),
+                };
+                bar.push(ch);
+            }
+            bar
+        };
+
+        for (i, &count) in hist.iter().take(HOP_RANGE).enumerate() {
+            let label = alloc::format!("{:>2}", i);
+            let bar = make_bar(count);
+            println!("{} | {} ({})", label, bar, count);
+        }
+
+        let of_count = hist[HOP_RANGE];
+        let of_bar = make_bar(of_count);
+        println!("OF | {} ({})", of_bar, of_count);
+    }
 }
 
 #[inline(always)]
@@ -2730,7 +2823,6 @@ mod tests {
         let key = "unique_key";
         let hash = hash_string_key(&state, key);
 
-        // First insertion
         let value_ref = table
             .entry(hash, |v| v.key == key)
             .or_insert_with(|| StringItem {
@@ -2739,14 +2831,13 @@ mod tests {
             });
         assert_eq!(value_ref.value, 42);
 
-        // Attempt to insert again, should get the existing value
         let existing_ref = table
             .entry(hash, |v| v.key == key)
             .or_insert_with(|| StringItem {
                 key: key.to_string(),
                 value: 100,
             });
-        assert_eq!(existing_ref.value, 42); // Should still be the original value
+        assert_eq!(existing_ref.value, 42);
 
         assert_eq!(table.len(), 1);
     }
@@ -2765,5 +2856,26 @@ mod tests {
             Entry::Vacant(_) => unreachable!("Entry should be occupied: {:#?}", table),
         };
         *value_ref = "new_value".to_string();
+    }
+
+    #[test]
+    #[cfg(feature = "std")]
+    fn histogram_output() {
+        let state = HashState::default();
+        let mut table: HashTable<Item> = HashTable::with_capacity(10000);
+        for k in 0..table.capacity() as u64 {
+            let hash = hash_key(&state, k);
+            match table.entry(hash, |v| v.key == k) {
+                Entry::Vacant(v) => {
+                    v.insert(Item {
+                        key: k,
+                        value: k as i32,
+                    });
+                }
+                _ => unreachable!(),
+            }
+        }
+
+        table.print_probe_histogram();
     }
 }
