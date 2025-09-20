@@ -7,12 +7,12 @@ use core::ptr::NonNull;
 
 #[inline(always)]
 fn target_load_factor(capacity: usize) -> usize {
-    ((capacity as u128 * 999) / 1000) as usize
+    ((capacity as u128 * 99) / 100) as usize
 }
 
 #[inline(always)]
 fn target_load_factor_inverse(capacity: usize) -> usize {
-    ((capacity as u128 * 1000) / 999) as usize
+    ((capacity as u128 * 100) / 99) as usize
 }
 
 #[inline(always)]
