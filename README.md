@@ -10,54 +10,6 @@ A high-performance hash table implementation in Rust, utilizing a 16-way hopscot
 - **Predictable Performance**: Short, bounded probe distances with hopscotch hashing
 - **Zero Dependencies**: Pure Rust implementation with no external dependencies
 
-### Basic Usage
-
-```rust
-use std::hash::{Hash, Hasher, DefaultHasher};
-use hop_hash::HashTable;
-
-#[derive(Debug, PartialEq)]
-struct Item {
-    key: u64,
-    value: String,
-}
-
-fn hash_key(key: u64) -> u64 {
-    let mut hasher = DefaultHasher::new();
-    key.hash(&mut hasher);
-    hasher.finish()
-}
-
-fn main() {
-    let mut table = HashTable::with_capacity(16);
-
-    // Insert an item
-    let hash = hash_key(42);
-    match table.entry(hash, |item: &Item| item.key == 42) {
-        hop_hash::Entry::Vacant(entry) => {
-            entry.insert(Item {
-                key: 42,
-                value: "Hello, World!".to_string(),
-            });
-        }
-        hop_hash::Entry::Occupied(mut entry) => {
-            // Key already exists, update value
-            entry.get_mut().value = "Updated!".to_string();
-        }
-    }
-
-    // Find an item
-    if let Some(item) = table.find(hash, |item| item.key == 42) {
-        println!("Found: {:?}", item);
-    }
-
-    // Remove an item
-    if let Some(removed) = table.remove(hash, |item| item.key == 42) {
-        println!("Removed: {:?}", removed);
-    }
-}
-```
-
 ## Architecture
 
 `hop-hash` is designed for high performance and low latency. It achieves this through a combination
@@ -107,7 +59,8 @@ failing:
 
 ### Space Complexity
 
-- **Memory Overhead**: 2 bytes per entry for the tags + hop info. This also implementation also stores full hash values, adding 8 bytes per entry.
+- **Memory Overhead**: 2 bytes per entry for the tags + hop info. This implementation also stores
+  full hash values, adding 8 bytes per entry.
 - **Load Factor**: Maintains ~93.75% occupancy (15/16)
 
 ## Implementation Details
@@ -159,5 +112,5 @@ Performance is highly dependent on hash function quality. Poor hash functions ca
 
 ## License
 
-This project is licensed under the terms of the MIT license or the Apache License (Version 2.0), at your
-option.
+This project is licensed under the terms of the MIT license or the Apache License (Version 2.0), at
+your option.

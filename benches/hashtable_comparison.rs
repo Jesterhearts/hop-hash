@@ -42,10 +42,10 @@ fn bench_insert_sequential(c: &mut Criterion) {
                     let hash = hash_key(key);
                     let item = TestItem::new(key);
                     match table.entry(hash, |v| v.key == key) {
-                        hop_hash::Entry::Vacant(entry) => {
+                        hop_hash::hash_table::Entry::Vacant(entry) => {
                             black_box(entry.insert(item));
                         }
-                        hop_hash::Entry::Occupied(_) => unreachable!(),
+                        hop_hash::hash_table::Entry::Occupied(_) => unreachable!(),
                     }
                 }
                 black_box(table)
@@ -62,10 +62,10 @@ fn bench_insert_sequential(c: &mut Criterion) {
                         let hash = hash_key(key);
                         let item = TestItem::new(key);
                         match table.entry(hash, |v| v.key == key) {
-                            hop_hash::Entry::Vacant(entry) => {
+                            hop_hash::hash_table::Entry::Vacant(entry) => {
                                 black_box(entry.insert(item));
                             }
-                            hop_hash::Entry::Occupied(_) => unreachable!(),
+                            hop_hash::hash_table::Entry::Occupied(_) => unreachable!(),
                         }
                     }
                     black_box(table)
@@ -140,10 +140,10 @@ fn bench_insert_random(c: &mut Criterion) {
                     let hash = hash_key(key);
                     let item = TestItem::new(key);
                     match table.entry(hash, |v| v.key == key) {
-                        hop_hash::Entry::Vacant(entry) => {
+                        hop_hash::hash_table::Entry::Vacant(entry) => {
                             black_box(entry.insert(item));
                         }
-                        hop_hash::Entry::Occupied(_) => unreachable!(),
+                        hop_hash::hash_table::Entry::Occupied(_) => unreachable!(),
                     }
                 }
                 black_box(table)
@@ -184,10 +184,10 @@ fn bench_find_sequential(c: &mut Criterion) {
             let item = TestItem::new(key);
 
             match hop_table.entry(hash, |v| v.key == key) {
-                hop_hash::Entry::Vacant(entry) => {
+                hop_hash::hash_table::Entry::Vacant(entry) => {
                     entry.insert(item.clone());
                 }
-                hop_hash::Entry::Occupied(_) => unreachable!(),
+                hop_hash::hash_table::Entry::Occupied(_) => unreachable!(),
             }
 
             match hashbrown_table.entry(hash, |v| v.key == key, |v| hash_key(v.key)) {
@@ -237,10 +237,10 @@ fn bench_find_hit_miss(c: &mut Criterion) {
             let item = TestItem::new(key);
 
             match hop_table.entry(hash, |v| v.key == key) {
-                hop_hash::Entry::Vacant(entry) => {
+                hop_hash::hash_table::Entry::Vacant(entry) => {
                     entry.insert(item.clone());
                 }
-                hop_hash::Entry::Occupied(_) => unreachable!(),
+                hop_hash::hash_table::Entry::Occupied(_) => unreachable!(),
             }
 
             match hashbrown_table.entry(hash, |v| v.key == key, |v| hash_key(v.key)) {
@@ -312,10 +312,10 @@ fn bench_remove(c: &mut Criterion) {
                         let hash = hash_key(key);
                         let item = TestItem::new(key);
                         match table.entry(hash, |v| v.key == key) {
-                            hop_hash::Entry::Vacant(entry) => {
+                            hop_hash::hash_table::Entry::Vacant(entry) => {
                                 entry.insert(item);
                             }
-                            hop_hash::Entry::Occupied(_) => unreachable!(),
+                            hop_hash::hash_table::Entry::Occupied(_) => unreachable!(),
                         }
                     }
                     table
@@ -383,10 +383,10 @@ fn bench_iteration(c: &mut Criterion) {
             let item = TestItem::new(key);
 
             match hop_table.entry(hash, |v| v.key == key) {
-                hop_hash::Entry::Vacant(entry) => {
+                hop_hash::hash_table::Entry::Vacant(entry) => {
                     entry.insert(item.clone());
                 }
-                hop_hash::Entry::Occupied(_) => unreachable!(),
+                hop_hash::hash_table::Entry::Occupied(_) => unreachable!(),
             }
 
             match hashbrown_table.entry(hash, |v| v.key == key, |v| hash_key(v.key)) {
@@ -436,10 +436,10 @@ fn bench_drain(c: &mut Criterion) {
                         let hash = hash_key(key);
                         let item = TestItem::new(key);
                         match table.entry(hash, |v| v.key == key) {
-                            hop_hash::Entry::Vacant(entry) => {
+                            hop_hash::hash_table::Entry::Vacant(entry) => {
                                 entry.insert(item);
                             }
-                            hop_hash::Entry::Occupied(_) => unreachable!(),
+                            hop_hash::hash_table::Entry::Occupied(_) => unreachable!(),
                         }
                     }
                     table
@@ -502,10 +502,10 @@ fn bench_hash_collisions(c: &mut Criterion) {
                 let key = i as u64;
                 let item = TestItem::new(key);
                 match table.entry(collision_hash, |v| v.key == key) {
-                    hop_hash::Entry::Vacant(entry) => {
+                    hop_hash::hash_table::Entry::Vacant(entry) => {
                         black_box(entry.insert(item));
                     }
-                    hop_hash::Entry::Occupied(_) => unreachable!(),
+                    hop_hash::hash_table::Entry::Occupied(_) => unreachable!(),
                 }
             }
             black_box(table)
@@ -537,10 +537,10 @@ fn bench_hash_collisions(c: &mut Criterion) {
         let item = TestItem::new(key);
 
         match hop_table.entry(collision_hash, |v| v.key == key) {
-            hop_hash::Entry::Vacant(entry) => {
+            hop_hash::hash_table::Entry::Vacant(entry) => {
                 entry.insert(item.clone());
             }
-            hop_hash::Entry::Occupied(_) => unreachable!(),
+            hop_hash::hash_table::Entry::Occupied(_) => unreachable!(),
         }
 
         match hashbrown_table.entry(collision_hash, |v| v.key == key, |v| hash_key(v.key)) {
@@ -587,10 +587,10 @@ fn bench_mixed_workload(c: &mut Criterion) {
                     let hash = hash_key(key);
                     let item = TestItem::new(key);
                     match table.entry(hash, |v| v.key == key) {
-                        hop_hash::Entry::Vacant(entry) => {
+                        hop_hash::hash_table::Entry::Vacant(entry) => {
                             entry.insert(item);
                         }
-                        hop_hash::Entry::Occupied(_) => unreachable!(),
+                        hop_hash::hash_table::Entry::Occupied(_) => unreachable!(),
                     }
                 }
 
@@ -613,10 +613,10 @@ fn bench_mixed_workload(c: &mut Criterion) {
                     let hash = hash_key(key);
                     let item = TestItem::new(key);
                     match table.entry(hash, |v| v.key == key) {
-                        hop_hash::Entry::Vacant(entry) => {
+                        hop_hash::hash_table::Entry::Vacant(entry) => {
                             entry.insert(item);
                         }
-                        hop_hash::Entry::Occupied(_) => unreachable!(),
+                        hop_hash::hash_table::Entry::Occupied(_) => unreachable!(),
                     }
                 }
 
@@ -688,10 +688,10 @@ fn bench_occupancy_ratio(_c: &mut Criterion) {
             let item = TestItem::new(key);
 
             match hop_table.entry(hash, |v| v.key == key) {
-                hop_hash::Entry::Vacant(entry) => {
+                hop_hash::hash_table::Entry::Vacant(entry) => {
                     entry.insert(item.clone());
                 }
-                hop_hash::Entry::Occupied(_) => unreachable!(),
+                hop_hash::hash_table::Entry::Occupied(_) => unreachable!(),
             }
 
             match hashbrown_table.entry(hash, |v| v.key == key, |v| hash_key(v.key)) {
@@ -720,10 +720,10 @@ fn bench_occupancy_ratio(_c: &mut Criterion) {
             let item = TestItem::new(key);
 
             match hop_table.entry(hash, |v| v.key == key) {
-                hop_hash::Entry::Vacant(entry) => {
+                hop_hash::hash_table::Entry::Vacant(entry) => {
                     entry.insert(item.clone());
                 }
-                hop_hash::Entry::Occupied(_) => unreachable!(),
+                hop_hash::hash_table::Entry::Occupied(_) => unreachable!(),
             }
 
             match hashbrown_table.entry(hash, |v| v.key == key, |v| hash_key(v.key)) {
