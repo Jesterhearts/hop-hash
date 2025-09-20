@@ -23,4 +23,5 @@ of modern hash table design principles:
 
 ## License
 
-This project is licensed under the terms of the MIT license.
+This project is licensed under the terms of the MIT license or the Apache License (Version 2.0), at your
+option.

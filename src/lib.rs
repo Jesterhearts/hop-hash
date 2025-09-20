@@ -8,13 +8,13 @@ use std::ptr::NonNull;
 
 extern crate alloc;
 
-const EMPTY: u8 = 0;
+const EMPTY: u8 = 0x80;
 
 const HOP_RANGE: usize = 16;
 
 #[inline(always)]
 fn hashtag(tag: u64) -> u8 {
-    (tag >> 56) as u8 | 0x80
+    (tag >> 57) as u8
 }
 
 #[inline(always)]
@@ -225,7 +225,7 @@ impl<V> Drop for HashTable<V> {
         unsafe {
             if core::mem::needs_drop::<V>() && self.populated > 0 {
                 for (word_idx, word) in self.tags_ptr().as_ref().iter().enumerate() {
-                    if *word != 0 {
+                    if *word != EMPTY {
                         self.buckets_ptr()
                             .as_mut()
                             .get_unchecked_mut(word_idx)
@@ -244,7 +244,7 @@ impl<V> Drop for HashTable<V> {
 
 impl<V> HashTable<V> {
     pub fn with_capacity(capacity: usize) -> Self {
-        let capacity: Capacity = (capacity.div_ceil(16)).into();
+        let capacity: Capacity = ((capacity.div_ceil(16) as u128 * 16 / 15) as usize).into();
 
         let layout = DataLayout::new::<V>(capacity);
         let alloc = if layout.layout.size() == 0 {
@@ -256,7 +256,12 @@ impl<V> HashTable<V> {
                     handle_alloc_error(layout.layout);
                 }
 
-                core::ptr::write_bytes(raw_alloc, 0x0, layout.buckets_offset);
+                core::ptr::write_bytes(raw_alloc, 0x0, layout.tags_offset);
+                core::ptr::write_bytes(
+                    raw_alloc.add(layout.tags_offset),
+                    EMPTY,
+                    layout.buckets_offset - layout.tags_offset,
+                );
 
                 NonNull::new_unchecked(raw_alloc)
             }
@@ -615,7 +620,7 @@ impl<V> HashTable<V> {
 
     #[inline(always)]
     unsafe fn is_occupied(&self, index: usize) -> bool {
-        unsafe { *self.tags_ptr().as_ref().get_unchecked(index) != 0 }
+        unsafe { *self.tags_ptr().as_ref().get_unchecked(index) != EMPTY }
     }
 
     #[inline(always)]
@@ -644,7 +649,7 @@ impl<V> HashTable<V> {
             {
                 self.tags_ptr().as_ref()[start..]
                     .iter()
-                    .position(|&b| b == 0)
+                    .position(|&b| b == EMPTY)
                     .map(|idx| idx + start)
             }
         }
@@ -657,14 +662,12 @@ impl<V> HashTable<V> {
         unsafe {
             let meta_ptr = self.tags_ptr();
             let tags_ptr = meta_ptr.as_ref().as_ptr().add(start);
-            let zero_vec = _mm_setzero_si128();
             let len = (meta_ptr.as_ref().len()).saturating_sub(start);
 
             let mut offset = 0;
             while offset + 16 <= len {
                 let data = _mm_loadu_si128(tags_ptr.add(offset) as *const __m128i);
-                let cmp = _mm_cmpeq_epi8(data, zero_vec);
-                let mask = _mm_movemask_epi8(cmp) as u16;
+                let mask = _mm_movemask_epi8(data) as u16;
 
                 if mask != 0 {
                     let tz = mask.trailing_zeros() as usize;
@@ -676,7 +679,7 @@ impl<V> HashTable<V> {
 
             while offset < len {
                 let byte = *tags_ptr.add(offset);
-                if byte == 0 {
+                if byte == EMPTY {
                     return Some(start + offset);
                 }
                 offset += 1;
@@ -759,7 +762,12 @@ impl<V> HashTable<V> {
             if raw_alloc.is_null() {
                 handle_alloc_error(new_layout.layout);
             }
-            core::ptr::write_bytes(raw_alloc, 0x0, new_layout.buckets_offset);
+            core::ptr::write_bytes(raw_alloc, 0x0, new_layout.tags_offset);
+            core::ptr::write_bytes(
+                raw_alloc.add(new_layout.tags_offset),
+                EMPTY,
+                new_layout.buckets_offset - new_layout.tags_offset,
+            );
 
             NonNull::new_unchecked(raw_alloc)
         };
@@ -930,7 +938,7 @@ fn find_occupied_slots(tags: &[u8]) -> impl Iterator<Item = usize> {
     {
         tags.iter()
             .enumerate()
-            .filter(|&(_, b)| *b != 0)
+            .filter(|&(_, b)| *b != EMPTY)
             .map(|(i, _)| i)
     }
 }
@@ -960,11 +968,11 @@ impl Iterator for Sse2FindOccupiedIter {
                 if self.byte_index + 16 <= self.total_bytes {
                     let ptr = self.tags.add(self.byte_index);
                     let data = _mm_loadu_si128(ptr as *const __m128i);
-                    self.bit_mask = _mm_movemask_epi8(data) as u16;
+                    self.bit_mask = !(_mm_movemask_epi8(data) as u16);
                     self.byte_index += 16;
                 } else if self.byte_index < self.total_bytes {
                     let byte = *self.tags.add(self.byte_index);
-                    if byte != 0 {
+                    if byte != EMPTY {
                         let idx = self.byte_index;
                         self.byte_index += 1;
                         return Some(idx);
