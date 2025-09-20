@@ -341,11 +341,13 @@ impl<V> Drop for HashTable<V> {
         // deallocating.
         unsafe {
             if core::mem::needs_drop::<V>() && self.populated > 0 {
-                for index in find_occupied_slots(self.tags_ptr().as_ref()) {
-                    self.buckets_ptr()
-                        .as_mut()
-                        .get_unchecked_mut(index)
-                        .assume_init_drop();
+                for (index, tag) in self.tags_ptr().as_ref().iter().enumerate() {
+                    if *tag != EMPTY {
+                        self.buckets_ptr()
+                            .as_mut()
+                            .get_unchecked_mut(index)
+                            .assume_init_drop();
+                    }
                 }
             }
 
@@ -602,11 +604,13 @@ impl<V> HashTable<V> {
         // dropped.
         unsafe {
             if core::mem::needs_drop::<V>() && self.populated > 0 {
-                for index in find_occupied_slots(self.tags_ptr().as_ref()) {
-                    self.buckets_ptr()
-                        .as_mut()
-                        .get_unchecked_mut(index)
-                        .assume_init_drop();
+                for (index, tag) in self.tags_ptr().as_ref().iter().enumerate() {
+                    if *tag != EMPTY {
+                        self.buckets_ptr()
+                            .as_mut()
+                            .get_unchecked_mut(index)
+                            .assume_init_drop();
+                    }
                 }
             }
 
@@ -933,15 +937,26 @@ impl<V> HashTable<V> {
         }
 
         if !self.overflow.is_empty() {
-            for (idx, (_, overflow)) in self.overflow.iter().enumerate() {
-                if eq(overflow) {
-                    return Entry::Occupied(OccupiedEntry {
-                        table: self,
-                        root_index: hop_bucket,
-                        n_index: 0,
-                        overflow_index: Some(idx),
-                    });
+            #[cold]
+            #[inline(never)]
+            fn search_overflow<V>(
+                overflow: &[(u64, V)],
+                eq: &impl Fn(&V) -> bool,
+            ) -> Option<usize> {
+                for (idx, (_, overflow)) in overflow.iter().enumerate() {
+                    if eq(overflow) {
+                        return Some(idx);
+                    }
                 }
+                None
+            }
+            if let Some(overflow_index) = search_overflow(&self.overflow, &eq) {
+                return Entry::Occupied(OccupiedEntry {
+                    n_index: 0,
+                    table: self,
+                    root_index: hop_bucket,
+                    overflow_index: Some(overflow_index),
+                });
             }
         }
 
@@ -1006,15 +1021,12 @@ impl<V> HashTable<V> {
                         .get_unchecked(absolute_idx)
                         .assume_init_read();
 
+                    let buckets_ptr = self.buckets_ptr().as_mut().as_mut_ptr();
+                    debug_assert_ne!(absolute_idx, absolute_empty_idx);
+
                     core::ptr::copy_nonoverlapping(
-                        self.buckets_ptr()
-                            .as_ref()
-                            .get_unchecked(absolute_idx)
-                            .as_ptr(),
-                        self.buckets_ptr()
-                            .as_mut()
-                            .get_unchecked_mut(absolute_empty_idx)
-                            .as_mut_ptr(),
+                        buckets_ptr.add(absolute_idx),
+                        buckets_ptr.add(absolute_empty_idx),
                         1,
                     );
                     self.hashes_ptr()
@@ -1248,6 +1260,12 @@ impl<V> HashTable<V> {
             return None;
         }
 
+        self.find_overflow(eq)
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn find_overflow(&self, eq: impl Fn(&V) -> bool) -> Option<&V> {
         self.overflow
             .iter()
             .map(|(_, overflow)| overflow)
@@ -1319,6 +1337,12 @@ impl<V> HashTable<V> {
             return None;
         }
 
+        self.find_overflow_mut(eq)
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn find_overflow_mut(&mut self, eq: impl Fn(&V) -> bool) -> Option<&mut V> {
         self.overflow
             .iter_mut()
             .map(|(_, overflow)| overflow)
@@ -1411,9 +1435,12 @@ impl<V> HashTable<V> {
             // values.
             self.populated = 0;
 
-            let old_populated = find_occupied_slots(old_emptymap.as_ref());
             let mut pending_indexes = Vec::with_capacity(old_max_root * 16);
-            for bucket_index in old_populated {
+            for (bucket_index, &tag) in old_emptymap.as_ref().iter().enumerate() {
+                if tag == EMPTY {
+                    continue;
+                }
+
                 let hash = old_hashes
                     .as_ref()
                     .get_unchecked(bucket_index)
@@ -1426,6 +1453,7 @@ impl<V> HashTable<V> {
                 }
 
                 self.populated += 1;
+
                 core::ptr::copy_nonoverlapping(
                     old_buckets.as_ref().get_unchecked(bucket_index).as_ptr(),
                     self.buckets_ptr()
@@ -1633,71 +1661,6 @@ impl<V> HashTable<V> {
         let of_count = hist[HOP_RANGE];
         let of_bar = make_bar(of_count);
         println!("OF | {} ({})", of_bar, of_count);
-    }
-}
-
-#[inline(always)]
-fn find_occupied_slots(tags: &[u8]) -> impl Iterator<Item = usize> {
-    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
-    {
-        Sse2FindOccupiedIter {
-            tags: tags.as_ptr(),
-            total_bytes: tags.len(),
-            byte_index: 0,
-            bit_mask: 0,
-        }
-    }
-
-    #[cfg(not(all(target_arch = "x86_64", target_feature = "sse2")))]
-    {
-        tags.iter()
-            .enumerate()
-            .filter(|&(_, b)| *b != EMPTY)
-            .map(|(i, _)| i)
-    }
-}
-
-#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
-struct Sse2FindOccupiedIter {
-    tags: *const u8,
-    total_bytes: usize,
-    byte_index: usize,
-    bit_mask: u16,
-}
-
-#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
-impl Iterator for Sse2FindOccupiedIter {
-    type Item = usize;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        use core::arch::x86_64::*;
-        // SAFETY: meta_ptr valid, bounds checked in loop, SIMD ops on aligned data
-        unsafe {
-            loop {
-                if self.bit_mask != 0 {
-                    let tz = self.bit_mask.trailing_zeros() as usize;
-                    self.bit_mask &= !(1 << tz);
-                    return Some(self.byte_index - 16 + tz);
-                }
-
-                if self.byte_index + 16 <= self.total_bytes {
-                    let ptr = self.tags.add(self.byte_index);
-                    let data = _mm_loadu_si128(ptr as *const __m128i);
-                    self.bit_mask = !(_mm_movemask_epi8(data) as u16);
-                    self.byte_index += 16;
-                } else if self.byte_index < self.total_bytes {
-                    let byte = *self.tags.add(self.byte_index);
-                    if byte != EMPTY {
-                        let idx = self.byte_index;
-                        self.byte_index += 1;
-                        return Some(idx);
-                    }
-                    self.byte_index += 1;
-                } else {
-                    return None;
-                }
-            }
-        }
     }
 }
 
@@ -2299,6 +2262,10 @@ impl<'a, V> Iterator for Iter<'a, V> {
     type Item = &'a V;
 
     fn next(&mut self) -> Option<Self::Item> {
+        if self.table.populated == 0 {
+            return None;
+        }
+
         // SAFETY: slot_index bounds checked, values confirmed initialized by occupied
         // tags
         unsafe {
@@ -2377,6 +2344,10 @@ impl<'a, V> Iterator for Drain<'a, V> {
     type Item = V;
 
     fn next(&mut self) -> Option<Self::Item> {
+        if self.table.populated == 0 {
+            return None;
+        }
+
         // SAFETY: slot_index bounds checked, values confirmed initialized by occupied
         // tags
         unsafe {
@@ -2863,6 +2834,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     #[cfg(feature = "std")]
     fn histogram_output() {
         let state = HashState::default();

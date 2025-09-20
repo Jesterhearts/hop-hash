@@ -551,3 +551,348 @@ where
         self.iter()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use core::hash::BuildHasher;
+
+    use siphasher::sip::SipHasher;
+
+    use super::*;
+
+    #[derive(Clone)]
+    struct SipHashBuilder;
+
+    impl BuildHasher for SipHashBuilder {
+        type Hasher = SipHasher;
+
+        fn build_hasher(&self) -> Self::Hasher {
+            SipHasher::new()
+        }
+    }
+
+    impl Default for SipHashBuilder {
+        fn default() -> Self {
+            Self
+        }
+    }
+
+    #[test]
+    fn test_new_and_with_hasher() {
+        let set: HashSet<i32, SipHashBuilder> = HashSet::new();
+        assert!(set.is_empty());
+        assert_eq!(set.len(), 0);
+
+        let set2 = HashSet::<i32, _>::with_hasher(SipHashBuilder);
+        assert!(set2.is_empty());
+        assert_eq!(set2.len(), 0);
+    }
+
+    #[test]
+    fn test_with_capacity() {
+        let set: HashSet<i32, SipHashBuilder> = HashSet::with_capacity(100);
+        assert!(set.capacity() >= 100);
+        assert!(set.is_empty());
+
+        let set2 = HashSet::<i32, _>::with_capacity_and_hasher(200, SipHashBuilder);
+        assert!(set2.capacity() >= 200);
+        assert!(set2.is_empty());
+    }
+
+    #[test]
+    fn test_insert_and_contains() {
+        let mut set = HashSet::with_hasher(SipHashBuilder);
+
+        assert!(set.insert(1));
+        assert_eq!(set.len(), 1);
+        assert!(!set.is_empty());
+        assert!(set.contains(&1));
+
+        assert!(!set.insert(1));
+        assert_eq!(set.len(), 1);
+        assert!(set.contains(&1));
+
+        assert!(set.insert(2));
+        assert_eq!(set.len(), 2);
+        assert!(set.contains(&1));
+        assert!(set.contains(&2));
+        assert!(!set.contains(&3));
+    }
+
+    #[test]
+    fn test_remove() {
+        let mut set = HashSet::with_hasher(SipHashBuilder);
+        set.insert(1);
+        set.insert(2);
+        set.insert(3);
+
+        assert!(set.remove(&2));
+        assert_eq!(set.len(), 2);
+        assert!(set.contains(&1));
+        assert!(!set.contains(&2));
+        assert!(set.contains(&3));
+
+        assert!(!set.remove(&2));
+        assert!(!set.remove(&4));
+        assert_eq!(set.len(), 2);
+    }
+
+    #[test]
+    fn test_take() {
+        let mut set = HashSet::with_hasher(SipHashBuilder);
+        set.insert(1);
+        set.insert(2);
+
+        assert_eq!(set.take(&1), Some(1));
+        assert_eq!(set.len(), 1);
+        assert!(!set.contains(&1));
+        assert!(set.contains(&2));
+
+        assert_eq!(set.take(&1), None);
+        assert_eq!(set.take(&3), None);
+    }
+
+    #[test]
+    fn test_get() {
+        let mut set = HashSet::with_hasher(SipHashBuilder);
+        set.insert(42);
+
+        assert_eq!(set.get(&42), Some(&42));
+        assert_eq!(set.get(&1), None);
+    }
+
+    #[test]
+    fn test_clear() {
+        let mut set = HashSet::with_hasher(SipHashBuilder);
+        set.insert(1);
+        set.insert(2);
+        set.insert(3);
+
+        assert_eq!(set.len(), 3);
+        set.clear();
+        assert_eq!(set.len(), 0);
+        assert!(set.is_empty());
+        assert!(!set.contains(&1));
+        assert!(!set.contains(&2));
+        assert!(!set.contains(&3));
+    }
+
+    #[test]
+    fn test_reserve() {
+        let mut set = HashSet::<i32, _>::with_hasher(SipHashBuilder);
+        let initial_capacity = set.capacity();
+
+        set.reserve(1000);
+        assert!(set.capacity() >= initial_capacity + 1000);
+    }
+
+    #[test]
+    fn test_iter() {
+        let mut set = HashSet::with_hasher(SipHashBuilder);
+        set.insert(1);
+        set.insert(2);
+        set.insert(3);
+
+        let values: std::collections::HashSet<i32> = set.iter().copied().collect();
+        assert_eq!(values.len(), 3);
+        assert!(values.contains(&1));
+        assert!(values.contains(&2));
+        assert!(values.contains(&3));
+    }
+
+    #[test]
+    fn test_into_iterator() {
+        let mut set = HashSet::with_hasher(SipHashBuilder);
+        set.insert(1);
+        set.insert(2);
+        set.insert(3);
+
+        let values: std::collections::HashSet<i32> = (&set).into_iter().copied().collect();
+        assert_eq!(values.len(), 3);
+        assert!(values.contains(&1));
+        assert!(values.contains(&2));
+        assert!(values.contains(&3));
+    }
+
+    #[test]
+    fn test_drain() {
+        let mut set = HashSet::with_hasher(SipHashBuilder);
+        set.insert(1);
+        set.insert(2);
+        set.insert(3);
+
+        let drained: std::collections::HashSet<i32> = set.drain().collect();
+        assert_eq!(drained.len(), 3);
+        assert!(set.is_empty());
+
+        assert!(drained.contains(&1));
+        assert!(drained.contains(&2));
+        assert!(drained.contains(&3));
+    }
+
+    #[test]
+    fn test_multiple_insertions() {
+        let mut set = HashSet::with_hasher(SipHashBuilder);
+
+        for i in 0..100 {
+            assert!(set.insert(i));
+        }
+
+        assert_eq!(set.len(), 100);
+
+        for i in 0..100 {
+            assert!(set.contains(&i));
+        }
+
+        for i in 0..100 {
+            assert!(!set.insert(i));
+        }
+
+        assert_eq!(set.len(), 100);
+    }
+
+    #[test]
+    fn test_collision_handling() {
+        let mut set = HashSet::with_hasher(SipHashBuilder);
+
+        for i in 0..1000 {
+            assert!(set.insert(i));
+        }
+
+        assert_eq!(set.len(), 1000);
+
+        for i in 0..1000 {
+            assert!(set.contains(&i));
+        }
+
+        for i in (0..1000).step_by(2) {
+            assert!(set.remove(&i));
+        }
+
+        assert_eq!(set.len(), 500);
+
+        for i in (1..1000).step_by(2) {
+            assert!(set.contains(&i));
+        }
+
+        for i in (0..1000).step_by(2) {
+            assert!(!set.contains(&i));
+        }
+    }
+
+    #[test]
+    fn test_string_values() {
+        let mut set = HashSet::with_hasher(SipHashBuilder);
+
+        assert!(set.insert("hello".to_string()));
+        assert!(set.insert("world".to_string()));
+        assert!(set.insert("rust".to_string()));
+
+        assert!(set.contains(&"hello".to_string()));
+        assert!(set.contains(&"world".to_string()));
+        assert!(set.contains(&"rust".to_string()));
+        assert!(!set.contains(&"missing".to_string()));
+
+        assert_eq!(set.len(), 3);
+
+        assert!(!set.insert("hello".to_string()));
+        assert_eq!(set.len(), 3);
+    }
+
+    #[test]
+    fn test_default_trait() {
+        let set: HashSet<i32, SipHashBuilder> = HashSet::default();
+        assert!(set.is_empty());
+        assert_eq!(set.len(), 0);
+    }
+
+    #[test]
+    fn test_complex_values() {
+        let mut set = HashSet::with_hasher(SipHashBuilder);
+
+        let vec1 = vec![1, 2, 3];
+        let vec2 = vec![4, 5, 6];
+        let vec3 = vec![1, 2, 3];
+
+        assert!(set.insert(vec1.clone()));
+        assert!(set.insert(vec2.clone()));
+        assert!(!set.insert(vec3));
+
+        assert_eq!(set.len(), 2);
+        assert!(set.contains(&vec1));
+        assert!(set.contains(&vec2));
+    }
+
+    #[test]
+    fn test_edge_cases() {
+        let mut set = HashSet::with_hasher(SipHashBuilder);
+
+        let empty_set = HashSet::<i32, _>::with_capacity_and_hasher(0, SipHashBuilder);
+        assert_eq!(empty_set.len(), 0);
+
+        assert!(!set.remove(&1));
+        assert_eq!(set.take(&1), None);
+
+        assert_eq!(set.get(&1), None);
+
+        set.clear();
+        assert!(set.is_empty());
+
+        assert_eq!(set.iter().count(), 0);
+
+        assert_eq!(set.drain().count(), 0);
+    }
+
+    #[test]
+    fn test_insert_remove_cycle() {
+        let mut set = HashSet::with_hasher(SipHashBuilder);
+
+        for _ in 0..10 {
+            for i in 0..50 {
+                assert!(set.insert(i));
+            }
+            assert_eq!(set.len(), 50);
+
+            for i in 0..50 {
+                assert!(set.remove(&i));
+            }
+            assert_eq!(set.len(), 0);
+            assert!(set.is_empty());
+        }
+    }
+
+    #[test]
+    fn test_large_values() {
+        let mut set = HashSet::with_hasher(SipHashBuilder);
+
+        for i in 0..100 {
+            let large_string = "x".repeat(1000) + &i.to_string();
+            assert!(set.insert(large_string.clone()));
+            assert!(set.contains(&large_string));
+        }
+
+        assert_eq!(set.len(), 100);
+    }
+
+    #[test]
+    fn test_numeric_types() {
+        let mut u8_set = HashSet::with_hasher(SipHashBuilder);
+        let mut u64_set = HashSet::with_hasher(SipHashBuilder);
+        let mut i32_set = HashSet::with_hasher(SipHashBuilder);
+
+        for i in 0u8..=255u8 {
+            u8_set.insert(i);
+        }
+        assert_eq!(u8_set.len(), 256);
+
+        for i in 0u64..100u64 {
+            u64_set.insert(i * 1_000_000_000);
+        }
+        assert_eq!(u64_set.len(), 100);
+
+        for i in -50i32..50i32 {
+            i32_set.insert(i);
+        }
+        assert_eq!(i32_set.len(), 100);
+    }
+}

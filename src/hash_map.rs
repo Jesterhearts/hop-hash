@@ -829,3 +829,344 @@ impl<'a, K, V> Drop for Drain<'a, K, V> {
         for _ in self {}
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use core::hash::BuildHasher;
+
+    use siphasher::sip::SipHasher;
+
+    use super::*;
+
+    #[derive(Clone)]
+    struct SipHashBuilder;
+
+    impl BuildHasher for SipHashBuilder {
+        type Hasher = SipHasher;
+
+        fn build_hasher(&self) -> Self::Hasher {
+            SipHasher::new()
+        }
+    }
+
+    impl Default for SipHashBuilder {
+        fn default() -> Self {
+            Self
+        }
+    }
+
+    #[test]
+    fn test_new_and_with_hasher() {
+        let map: HashMap<i32, String, SipHashBuilder> = HashMap::new();
+        assert!(map.is_empty());
+        assert_eq!(map.len(), 0);
+
+        let map2 = HashMap::<i32, String, _>::with_hasher(SipHashBuilder);
+        assert!(map2.is_empty());
+        assert_eq!(map2.len(), 0);
+    }
+
+    #[test]
+    fn test_with_capacity() {
+        let map: HashMap<i32, String, SipHashBuilder> = HashMap::with_capacity(100);
+        assert!(map.capacity() >= 100);
+        assert!(map.is_empty());
+
+        let map2 = HashMap::<i32, String, _>::with_capacity_and_hasher(200, SipHashBuilder);
+        assert!(map2.capacity() >= 200);
+        assert!(map2.is_empty());
+    }
+
+    #[test]
+    fn test_insert_and_get() {
+        let mut map = HashMap::with_hasher(SipHashBuilder);
+
+        assert_eq!(map.insert(1, "hello".to_string()), None);
+        assert_eq!(map.len(), 1);
+        assert!(!map.is_empty());
+
+        assert_eq!(map.get(&1), Some(&"hello".to_string()));
+        assert_eq!(map.get(&2), None);
+
+        assert_eq!(
+            map.insert(1, "world".to_string()),
+            Some("hello".to_string())
+        );
+        assert_eq!(map.len(), 1);
+        assert_eq!(map.get(&1), Some(&"world".to_string()));
+    }
+
+    #[test]
+    fn test_get_mut() {
+        let mut map = HashMap::with_hasher(SipHashBuilder);
+        map.insert(1, "hello".to_string());
+
+        if let Some(value) = map.get_mut(&1) {
+            value.push_str(" world");
+        }
+
+        assert_eq!(map.get(&1), Some(&"hello world".to_string()));
+        assert_eq!(map.get_mut(&2), None);
+    }
+
+    #[test]
+    fn test_contains_key() {
+        let mut map = HashMap::with_hasher(SipHashBuilder);
+        assert!(!map.contains_key(&1));
+
+        map.insert(1, "value".to_string());
+        assert!(map.contains_key(&1));
+        assert!(!map.contains_key(&2));
+    }
+
+    #[test]
+    fn test_remove() {
+        let mut map = HashMap::with_hasher(SipHashBuilder);
+        map.insert(1, "hello".to_string());
+        map.insert(2, "world".to_string());
+
+        assert_eq!(map.remove(&1), Some("hello".to_string()));
+        assert_eq!(map.len(), 1);
+        assert!(!map.contains_key(&1));
+        assert!(map.contains_key(&2));
+
+        assert_eq!(map.remove(&1), None);
+        assert_eq!(map.remove(&3), None);
+    }
+
+    #[test]
+    fn test_remove_entry() {
+        let mut map = HashMap::with_hasher(SipHashBuilder);
+        map.insert(1, "hello".to_string());
+
+        assert_eq!(map.remove_entry(&1), Some((1, "hello".to_string())));
+        assert_eq!(map.len(), 0);
+        assert_eq!(map.remove_entry(&1), None);
+    }
+
+    #[test]
+    fn test_clear() {
+        let mut map = HashMap::with_hasher(SipHashBuilder);
+        map.insert(1, "hello".to_string());
+        map.insert(2, "world".to_string());
+
+        assert_eq!(map.len(), 2);
+        map.clear();
+        assert_eq!(map.len(), 0);
+        assert!(map.is_empty());
+        assert!(!map.contains_key(&1));
+        assert!(!map.contains_key(&2));
+    }
+
+    #[test]
+    fn test_reserve() {
+        let mut map = HashMap::<i32, String, _>::with_hasher(SipHashBuilder);
+        let initial_capacity = map.capacity();
+
+        map.reserve(1000);
+        assert!(map.capacity() >= initial_capacity + 1000);
+    }
+
+    #[test]
+    fn test_entry_api() {
+        let mut map = HashMap::with_hasher(SipHashBuilder);
+
+        let value = map.entry(1).or_insert("hello".to_string());
+        assert_eq!(value, &"hello".to_string());
+        assert_eq!(map.len(), 1);
+
+        let value = map.entry(1).or_insert("world".to_string());
+        assert_eq!(value, &"hello".to_string());
+        assert_eq!(map.len(), 1);
+
+        map.entry(2).or_insert_with(|| "computed".to_string());
+        assert_eq!(map.get(&2), Some(&"computed".to_string()));
+
+        map.entry(1)
+            .and_modify(|v| v.push_str(" world"))
+            .or_insert("default".to_string());
+        assert_eq!(map.get(&1), Some(&"hello world".to_string()));
+
+        assert_eq!(map.entry(3).key(), &3);
+    }
+
+    #[test]
+    fn test_entry_or_default() {
+        let mut map: HashMap<i32, Vec<i32>, SipHashBuilder> = HashMap::with_hasher(SipHashBuilder);
+
+        map.entry(1).or_default().push(42);
+        assert_eq!(map.get(&1), Some(&vec![42]));
+
+        map.entry(1).or_default().push(24);
+        assert_eq!(map.get(&1), Some(&vec![42, 24]));
+    }
+
+    #[test]
+    fn test_occupied_entry() {
+        let mut map = HashMap::with_hasher(SipHashBuilder);
+        map.insert(1, "hello".to_string());
+
+        match map.entry(1) {
+            Entry::Occupied(mut entry) => {
+                assert_eq!(entry.key(), &1);
+                assert_eq!(entry.get(), &"hello".to_string());
+
+                *entry.get_mut() = "world".to_string();
+                assert_eq!(entry.get(), &"world".to_string());
+
+                let old_value = entry.insert("new".to_string());
+                assert_eq!(old_value, "world".to_string());
+                assert_eq!(entry.get(), &"new".to_string());
+
+                let (key, value) = entry.remove_entry();
+                assert_eq!(key, 1);
+                assert_eq!(value, "new".to_string());
+            }
+            Entry::Vacant(_) => panic!("Expected occupied entry"),
+        }
+
+        assert!(map.is_empty());
+    }
+
+    #[test]
+    fn test_vacant_entry() {
+        let mut map = HashMap::with_hasher(SipHashBuilder);
+
+        match map.entry(1) {
+            Entry::Vacant(entry) => {
+                assert_eq!(entry.key(), &1);
+
+                let value = entry.insert("hello".to_string());
+                assert_eq!(value, &"hello".to_string());
+            }
+            Entry::Occupied(_) => panic!("Expected vacant entry"),
+        }
+
+        assert_eq!(map.len(), 1);
+        assert_eq!(map.get(&1), Some(&"hello".to_string()));
+    }
+
+    #[test]
+    fn test_iterators() {
+        let mut map = HashMap::with_hasher(SipHashBuilder);
+        map.insert(1, "one".to_string());
+        map.insert(2, "two".to_string());
+        map.insert(3, "three".to_string());
+
+        let pairs: std::collections::HashMap<i32, String> =
+            map.iter().map(|(k, v)| (*k, v.clone())).collect();
+        assert_eq!(pairs.len(), 3);
+        assert_eq!(pairs.get(&1), Some(&"one".to_string()));
+        assert_eq!(pairs.get(&2), Some(&"two".to_string()));
+        assert_eq!(pairs.get(&3), Some(&"three".to_string()));
+
+        let keys: std::collections::HashSet<i32> = map.keys().copied().collect();
+        assert_eq!(keys.len(), 3);
+        assert!(keys.contains(&1));
+        assert!(keys.contains(&2));
+        assert!(keys.contains(&3));
+
+        let values: std::collections::HashSet<String> = map.values().cloned().collect();
+        assert_eq!(values.len(), 3);
+        assert!(values.contains("one"));
+        assert!(values.contains("two"));
+        assert!(values.contains("three"));
+    }
+
+    #[test]
+    fn test_drain() {
+        let mut map = HashMap::with_hasher(SipHashBuilder);
+        map.insert(1, "one".to_string());
+        map.insert(2, "two".to_string());
+        map.insert(3, "three".to_string());
+
+        let drained: std::collections::HashMap<i32, String> = map.drain().collect();
+        assert_eq!(drained.len(), 3);
+        assert!(map.is_empty());
+
+        assert_eq!(drained.get(&1), Some(&"one".to_string()));
+        assert_eq!(drained.get(&2), Some(&"two".to_string()));
+        assert_eq!(drained.get(&3), Some(&"three".to_string()));
+    }
+
+    #[test]
+    fn test_multiple_insertions() {
+        let mut map = HashMap::with_hasher(SipHashBuilder);
+
+        for i in 0..100 {
+            map.insert(i, format!("value_{}", i));
+        }
+
+        assert_eq!(map.len(), 100);
+
+        for i in 0..100 {
+            assert_eq!(map.get(&i), Some(&format!("value_{}", i)));
+        }
+    }
+
+    #[test]
+    fn test_collision_handling() {
+        let mut map = HashMap::with_hasher(SipHashBuilder);
+
+        for i in 0..1000 {
+            map.insert(i, i * 2);
+        }
+
+        assert_eq!(map.len(), 1000);
+
+        for i in 0..1000 {
+            assert_eq!(map.get(&i), Some(&(i * 2)));
+        }
+
+        for i in (0..1000).step_by(2) {
+            assert_eq!(map.remove(&i), Some(i * 2));
+        }
+
+        assert_eq!(map.len(), 500);
+
+        for i in (1..1000).step_by(2) {
+            assert_eq!(map.get(&i), Some(&(i * 2)));
+        }
+    }
+
+    #[test]
+    fn test_string_keys() {
+        let mut map = HashMap::with_hasher(SipHashBuilder);
+
+        map.insert("hello".to_string(), 1);
+        map.insert("world".to_string(), 2);
+        map.insert("rust".to_string(), 3);
+
+        assert_eq!(map.get(&"hello".to_string()), Some(&1));
+        assert_eq!(map.get(&"world".to_string()), Some(&2));
+        assert_eq!(map.get(&"rust".to_string()), Some(&3));
+        assert_eq!(map.get(&"missing".to_string()), None);
+    }
+
+    #[test]
+    fn test_default_trait() {
+        let map: HashMap<i32, String, SipHashBuilder> = HashMap::default();
+        assert!(map.is_empty());
+        assert_eq!(map.len(), 0);
+    }
+
+    #[test]
+    fn test_complex_values() {
+        let mut map = HashMap::with_hasher(SipHashBuilder);
+
+        let vec1 = vec![1, 2, 3];
+        let vec2 = vec![4, 5, 6];
+
+        map.insert("first".to_string(), vec1.clone());
+        map.insert("second".to_string(), vec2.clone());
+
+        assert_eq!(map.get(&"first".to_string()), Some(&vec1));
+        assert_eq!(map.get(&"second".to_string()), Some(&vec2));
+
+        if let Some(v) = map.get_mut(&"first".to_string()) {
+            v.push(4);
+        }
+
+        assert_eq!(map.get(&"first".to_string()), Some(&vec![1, 2, 3, 4]));
+    }
+}
