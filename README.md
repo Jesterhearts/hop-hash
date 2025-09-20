@@ -110,20 +110,6 @@ failing:
 - **Memory Overhead**: 2 bytes per entry for the tags + hop info. This also implementation also stores full hash values, adding 8 bytes per entry.
 - **Load Factor**: Maintains ~93.75% occupancy (15/16)
 
-## no_std Support
-
-`hop-hash` can be used in `no_std` environments:
-
-```toml
-[dependencies]
-hop-hash = { version = "0.1", default-features = false }
-```
-
-In `no_std` mode:
-- Uses `alloc` for memory allocation
-- All core functionality remains available
-- Compatible with embedded systems and kernel code
-
 ## Implementation Details
 
 ### Memory Layout
