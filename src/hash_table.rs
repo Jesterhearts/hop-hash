@@ -188,7 +188,7 @@ impl HopInfo {
 #[derive(Debug)]
 struct DataLayout {
     layout: Layout,
-    hopmap: usize,
+    hopmap_offset: usize,
     tags_offset: usize,
 
     buckets_offset: usize,
@@ -206,14 +206,14 @@ impl DataLayout {
         let hashes_layout = Layout::array::<MaybeUninit<u64>>(capacity.base * 16)
             .expect("allocation size overflow");
 
-        let (layout, hopmap) = Layout::new::<()>().extend(hopmap_layout).unwrap();
+        let (layout, hopmap_offset) = Layout::new::<()>().extend(hopmap_layout).unwrap();
         let (layout, tags_offset) = layout.extend(tags_layout).unwrap();
         let (layout, buckets_offset) = layout.extend(buckets_layout).unwrap();
         let (layout, hashes_offset) = layout.extend(hashes_layout).unwrap();
 
         DataLayout {
             layout,
-            hopmap,
+            hopmap_offset,
             tags_offset,
             buckets_offset,
             hashes_offset,
@@ -539,7 +539,7 @@ impl<V> HashTable<V> {
         // SAFETY: Allocation is valid and properly sized for the hopmap slice
         unsafe {
             NonNull::slice_from_raw_parts(
-                self.alloc.add(self.layout.hopmap).cast(),
+                self.alloc.add(self.layout.hopmap_offset).cast(),
                 self.max_root_mask.wrapping_add(1),
             )
         }
@@ -1001,7 +1001,10 @@ impl<V> HashTable<V> {
     ) -> Option<usize> {
         // SAFETY: Caller ensures that `bucket` is within bounds, as it is derived from
         // the hash and `max_root_mask`.
-        unsafe { prefetch(self.tags_ptr().as_ref().as_ptr().add(bucket * 16)) };
+        unsafe {
+            prefetch(self.tags_ptr().as_ref().as_ptr().add(bucket * 16));
+            prefetch(self.buckets_ptr().as_ref().as_ptr().add(bucket * 16));
+        };
 
         // SAFETY: Caller ensures that `bucket` is within bounds, as it is derived from
         // the hash and `max_root_mask`.
@@ -2581,7 +2584,18 @@ pub struct Drain<'a, V> {
 
 impl<V> Drop for Drain<'_, V> {
     fn drop(&mut self) {
-        for _ in self {}
+        for _ in &mut *self {}
+
+        unsafe {
+            core::ptr::write_bytes(
+                self.table
+                    .alloc
+                    .add(self.table.layout.hopmap_offset)
+                    .as_ptr(),
+                0,
+                self.table.layout.tags_offset,
+            );
+        }
     }
 }
 
@@ -2615,19 +2629,12 @@ impl<'a, V> Iterator for Drain<'a, V> {
                     // is guaranteed to be less than `HOP_RANGE * 16`, making `off / 16` a
                     // valid neighbor index (less than HOP_RANGE).
                     debug_assert!(off < HOP_RANGE * 16);
-                    self.table
-                        .hopmap_ptr()
-                        .as_mut()
-                        .get_unchecked_mut(root)
-                        .clear(off / 16);
                     self.table.clear_occupied(self.bucket_index);
-
                     let bucket = self
                         .table
                         .buckets_ptr()
                         .as_ref()
                         .get_unchecked(self.bucket_index);
-
                     self.bucket_index += 1;
                     return Some(bucket.assume_init_read());
                 }
