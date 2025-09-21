@@ -4,6 +4,7 @@ use core::hash::Hasher;
 use core::hint::black_box;
 
 use criterion::Criterion;
+use criterion::Throughput;
 use criterion::criterion_group;
 use criterion::criterion_main;
 use hashbrown::hash_table::Entry as HashbrownEntry;
@@ -30,7 +31,18 @@ impl TestItem {
     }
 }
 
-const SIZES: &[usize] = &[(1 << 13) - (1 << 11), (1 << 18) - (1 << 16)];
+const SIZES: &[usize] = &[
+    ((1 << 10) as f32 * 0.87) as usize,
+    ((1 << 11) as f32 * 0.87) as usize,
+    ((1 << 12) as f32 * 0.87) as usize,
+    ((1 << 13) as f32 * 0.87) as usize,
+    ((1 << 14) as f32 * 0.87) as usize,
+    ((1 << 15) as f32 * 0.87) as usize,
+    ((1 << 16) as f32 * 0.87) as usize,
+    ((1 << 17) as f32 * 0.87) as usize,
+    ((1 << 18) as f32 * 0.87) as usize,
+    ((1 << 19) as f32 * 0.87) as usize,
+];
 
 fn hash_key(key: &str) -> u64 {
     let mut hasher = SipHasher::new();
@@ -178,7 +190,10 @@ fn bench_find_sequential(c: &mut Criterion) {
     let mut group = c.benchmark_group("find_sequential");
 
     for size in SIZES.iter() {
-        let hash_and_item = (0..*size)
+        let hop_capacity = HopHashTable::<TestItem>::with_capacity(*size).capacity();
+        let hashbrown_capacity = HashbrownHashTable::<TestItem>::with_capacity(*size).capacity();
+
+        let hash_and_item = (0..hop_capacity.max(hashbrown_capacity))
             .map(|i| {
                 let key = i as u64;
                 let item = TestItem::new(key);
@@ -187,17 +202,19 @@ fn bench_find_sequential(c: &mut Criterion) {
             })
             .collect::<Vec<(u64, TestItem)>>();
 
-        let mut hop_table = HopHashTable::<TestItem>::with_capacity(0);
-        let mut hashbrown_table = HashbrownHashTable::<TestItem>::with_capacity(0);
+        let mut hop_table = HopHashTable::<TestItem>::with_capacity(*size);
+        let mut hashbrown_table = HashbrownHashTable::<TestItem>::with_capacity(*size);
 
-        for (hash, item) in hash_and_item.iter().cloned() {
+        for (hash, item) in hash_and_item.iter().take(hop_capacity).cloned() {
             match hop_table.entry(hash, |v| v.key == item.key) {
                 hop_hash::hash_table::Entry::Vacant(entry) => {
                     entry.insert(item.clone());
                 }
                 hop_hash::hash_table::Entry::Occupied(_) => unreachable!(),
             }
+        }
 
+        for (hash, item) in hash_and_item.iter().take(hashbrown_capacity).cloned() {
             match hashbrown_table.entry(hash, |v| v.key == item.key, |v| hash_key(&v.key)) {
                 HashbrownEntry::Vacant(entry) => {
                     entry.insert(item);
@@ -206,18 +223,20 @@ fn bench_find_sequential(c: &mut Criterion) {
             }
         }
 
+        group.throughput(Throughput::Elements(hop_capacity as u64));
         group.bench_function(format!("hop_hash/{}", size), |b| {
             b.iter(|| {
-                for (hash, item) in hash_and_item.iter() {
+                for (hash, item) in hash_and_item.iter().take(hop_capacity) {
                     let result = hop_table.find(*hash, |v| v.key == item.key);
                     black_box(result);
                 }
             })
         });
 
+        group.throughput(Throughput::Elements(hashbrown_capacity as u64));
         group.bench_function(format!("hashbrown/{}", size), |b| {
             b.iter(|| {
-                for (hash, item) in hash_and_item.iter() {
+                for (hash, item) in hash_and_item.iter().take(hashbrown_capacity) {
                     let result = hashbrown_table.find(*hash, |v| v.key == item.key);
                     black_box(result);
                 }
@@ -232,7 +251,10 @@ fn bench_find_hit_miss(c: &mut Criterion) {
     let mut group = c.benchmark_group("find_hit_miss");
 
     for size in SIZES.iter() {
-        let hash_and_item = (0..*size)
+        let hop_capacity = HopHashTable::<TestItem>::with_capacity(*size).capacity();
+        let hashbrown_capacity = HashbrownHashTable::<TestItem>::with_capacity(*size).capacity();
+
+        let hash_and_item = (0..hop_capacity.max(hashbrown_capacity))
             .step_by(2)
             .map(|i| {
                 let key = i as u64;
@@ -242,7 +264,7 @@ fn bench_find_hit_miss(c: &mut Criterion) {
             })
             .collect::<Vec<(u64, TestItem)>>();
 
-        let misses_hash_and_key = (1..*size)
+        let misses_hash_and_key = (1..hop_capacity.max(hashbrown_capacity))
             .step_by(2)
             .map(|i| {
                 let key = i as u64;
@@ -255,14 +277,16 @@ fn bench_find_hit_miss(c: &mut Criterion) {
         let mut hop_table = HopHashTable::<TestItem>::with_capacity(0);
         let mut hashbrown_table = HashbrownHashTable::<TestItem>::with_capacity(0);
 
-        for (hash, item) in hash_and_item.iter().cloned() {
+        for (hash, item) in hash_and_item.iter().take(hop_capacity / 2).cloned() {
             match hop_table.entry(hash, |v| v.key == item.key) {
                 hop_hash::hash_table::Entry::Vacant(entry) => {
                     entry.insert(item.clone());
                 }
                 hop_hash::hash_table::Entry::Occupied(_) => unreachable!(),
             }
+        }
 
+        for (hash, item) in hash_and_item.iter().take(hashbrown_capacity / 2).cloned() {
             match hashbrown_table.entry(hash, |v| v.key == item.key, |v| hash_key(&v.key)) {
                 HashbrownEntry::Vacant(entry) => {
                     entry.insert(item);
@@ -271,9 +295,10 @@ fn bench_find_hit_miss(c: &mut Criterion) {
             }
         }
 
+        group.throughput(Throughput::Elements((hop_capacity / 2) as u64));
         group.bench_function(format!("hop_hash/hits/{}", size), |b| {
             b.iter(|| {
-                for (hash, item) in hash_and_item.iter() {
+                for (hash, item) in hash_and_item.iter().take(hop_capacity / 2) {
                     let result = hop_table.find(*hash, |v| v.key == item.key);
                     black_box(result);
                 }
@@ -282,16 +307,17 @@ fn bench_find_hit_miss(c: &mut Criterion) {
 
         group.bench_function(format!("hop_hash/misses/{}", size), |b| {
             b.iter(|| {
-                for (hash, key) in misses_hash_and_key.iter() {
+                for (hash, key) in misses_hash_and_key.iter().take(hop_capacity / 2) {
                     let result = hop_table.find(*hash, |v| v.key == *key);
                     black_box(result);
                 }
             })
         });
 
+        group.throughput(Throughput::Elements((hashbrown_capacity / 2) as u64));
         group.bench_function(format!("hashbrown/hits/{}", size), |b| {
             b.iter(|| {
-                for (hash, item) in hash_and_item.iter() {
+                for (hash, item) in hash_and_item.iter().take(hashbrown_capacity / 2) {
                     let result = hashbrown_table.find(*hash, |v| v.key == item.key);
                     black_box(result);
                 }
@@ -300,7 +326,7 @@ fn bench_find_hit_miss(c: &mut Criterion) {
 
         group.bench_function(format!("hashbrown/misses/{}", size), |b| {
             b.iter(|| {
-                for (hash, key) in misses_hash_and_key.iter() {
+                for (hash, key) in misses_hash_and_key.iter().take(hashbrown_capacity / 2) {
                     let result = hashbrown_table.find(*hash, |v| v.key == *key);
                     black_box(result);
                 }
@@ -619,76 +645,6 @@ fn bench_mixed_workload(c: &mut Criterion) {
     group.finish();
 }
 
-fn bench_occupancy_ratio(_c: &mut Criterion) {
-    for size in SIZES.iter() {
-        let hash_and_item = (0..*size)
-            .map(|i| {
-                let key = i as u64;
-                let item = TestItem::new(key);
-                let hash = hash_key(&item.key);
-                (hash, item)
-            })
-            .collect::<Vec<(u64, TestItem)>>();
-
-        let mut hop_table = HopHashTable::<TestItem>::with_capacity(0);
-        let mut hashbrown_table = HashbrownHashTable::<TestItem>::with_capacity(0);
-
-        for (hash, item) in hash_and_item.iter().cloned() {
-            match hop_table.entry(hash, |v| v.key == item.key) {
-                hop_hash::hash_table::Entry::Vacant(entry) => {
-                    entry.insert(item.clone());
-                }
-                hop_hash::hash_table::Entry::Occupied(_) => unreachable!(),
-            }
-
-            match hashbrown_table.entry(hash, |v| v.key == item.key, |v| hash_key(&v.key)) {
-                HashbrownEntry::Vacant(entry) => {
-                    entry.insert(item);
-                }
-                HashbrownEntry::Occupied(_) => unreachable!(),
-            }
-        }
-
-        let hop_occupancy = hop_table.len() as f64 / hop_table.capacity() as f64;
-        let hashbrown_occupancy = hashbrown_table.len() as f64 / hashbrown_table.capacity() as f64;
-
-        println!(
-            "Size: {}, HopHash occupancy: {:.2}%, Hashbrown occupancy: {:.2}%",
-            size,
-            hop_occupancy * 100.0,
-            hashbrown_occupancy * 100.0
-        );
-
-        let mut hop_table = HopHashTable::<TestItem>::with_capacity(*size);
-        let mut hashbrown_table = HashbrownHashTable::<TestItem>::with_capacity(*size);
-        for (hash, item) in hash_and_item.iter().cloned() {
-            match hop_table.entry(hash, |v| v.key == item.key) {
-                hop_hash::hash_table::Entry::Vacant(entry) => {
-                    entry.insert(item.clone());
-                }
-                hop_hash::hash_table::Entry::Occupied(_) => unreachable!(),
-            }
-
-            match hashbrown_table.entry(hash, |v| v.key == item.key, |v| hash_key(&v.key)) {
-                HashbrownEntry::Vacant(entry) => {
-                    entry.insert(item);
-                }
-                HashbrownEntry::Occupied(_) => unreachable!(),
-            }
-        }
-
-        let hop_occupancy = hop_table.len() as f64 / hop_table.capacity() as f64;
-        let hashbrown_occupancy = hashbrown_table.len() as f64 / hashbrown_table.capacity() as f64;
-
-        println!(
-            "Preallocated Size: {}, HopHash occupancy: {:.2}%, Hashbrown occupancy: {:.2}%",
-            size,
-            hop_occupancy * 100.0,
-            hashbrown_occupancy * 100.0
-        );
-    }
-}
-
 criterion_group!(
     benches,
     bench_insert_sequential,
@@ -699,7 +655,6 @@ criterion_group!(
     bench_iteration,
     bench_drain,
     bench_mixed_workload,
-    bench_occupancy_ratio,
 );
 
 criterion_main!(benches);

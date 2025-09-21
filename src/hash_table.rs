@@ -20,7 +20,7 @@ fn prefetch<T>(ptr: *const T) {
     #[cfg(all(target_arch = "x86_64", target_feature = "sse"))]
     unsafe {
         use core::arch::x86_64::*;
-        _mm_prefetch(ptr as *const i8, _MM_HINT_T1);
+        _mm_prefetch(ptr as *const i8, _MM_HINT_T0);
     }
     #[cfg(all(target_arch = "x86", target_feature = "sse"))]
     {
@@ -133,8 +133,8 @@ impl HopInfo {
         #[allow(unused_variables, unreachable_code)]
         {
             let mut bits: u16 = 0;
-            for i in 0..16 {
-                if self.neighbors[i] != 0 {
+            for i in 0..HOP_RANGE {
+                if self.neighbors[i] > 0 {
                     bits |= 1 << i;
                 }
             }
@@ -158,7 +158,35 @@ impl HopInfo {
 
     #[inline(always)]
     fn is_full(&self) -> bool {
-        self.candidates() == 0xFFFF
+        #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+        {
+            return self.is_full_sse2();
+        }
+
+        #[allow(unused_variables, unreachable_code)]
+        {
+            for i in 0..HOP_RANGE {
+                if self.neighbors[i] < 16 {
+                    return false;
+                }
+            }
+            true
+        }
+    }
+
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+    #[inline(always)]
+    fn is_full_sse2(&self) -> bool {
+        use core::arch::x86_64::*;
+        // SAFETY: We have ensured that `HopInfo` is `#[repr(C, align(16))]`,
+        // with `neighbors` at offset 0. This guarantees 16-byte alignment,
+        // making it safe to load via `_mm_load_si128`.
+        unsafe {
+            let data = _mm_load_si128(self.neighbors.as_ptr() as *const __m128i);
+            let max = _mm_set1_epi8(16);
+            let cmp = _mm_cmpeq_epi8(data, max);
+            _mm_movemask_epi8(cmp) == 0xFFFF
+        }
     }
 
     /// Clear neighbor count at the given index
@@ -1006,11 +1034,9 @@ impl<V> HashTable<V> {
         bucket: usize,
         eq: impl Fn(&V) -> bool,
     ) -> Option<usize> {
-        // SAFETY: Caller ensures that `bucket` is within bounds, as it is derived from
-        // the hash and `max_root_mask`.
         unsafe {
-            prefetch(self.tags_ptr().as_ref().as_ptr().add(bucket * 16));
-        };
+            prefetch(self.hopmap_ptr().as_ref().as_ptr().add(bucket));
+        }
 
         // SAFETY: Caller ensures that `bucket` is within bounds, as it is derived from
         // the hash and `max_root_mask`.
@@ -1019,6 +1045,12 @@ impl<V> HashTable<V> {
                 .as_ref()
                 .get_unchecked(bucket)
                 .candidates()
+        };
+
+        // SAFETY: Caller ensures that `bucket` is within bounds, as it is derived from
+        // the hash and `max_root_mask`.
+        unsafe {
+            prefetch(self.tags_ptr().as_ref().as_ptr().add(bucket * 16));
         };
 
         let tag = hashtag(hash);
@@ -1030,13 +1062,45 @@ impl<V> HashTable<V> {
             neighborhood_mask ^= 1 << index;
             next_index = neighborhood_mask.trailing_zeros() as usize;
 
-            unsafe {
-                prefetch(
-                    self.buckets_ptr()
+            let base = bucket * 16 + index * 16;
+
+            // SAFETY: We have ensured `base` is valid, calculated from a validated bucket
+            // and an index within the neighborhood.
+            let mut tags = unsafe { self.scan_tags(base, tag) };
+
+            let mut index;
+            let mut next_index = tags.trailing_zeros() as usize;
+            while tags != 0 {
+                index = next_index;
+                tags ^= 1 << index;
+                next_index = tags.trailing_zeros() as usize;
+
+                let slot = base + index;
+
+                // SAFETY: We have ensured `slot` is within bounds, as it is calculated from a
+                // validated base and index.
+                if unsafe {
+                    self.hashes_ptr()
                         .as_ref()
-                        .as_ptr()
-                        .add(bucket * 16 + index * 16),
-                );
+                        .get_unchecked(slot)
+                        .assume_init_ref()
+                        == &hash
+                        && eq(self
+                            .buckets_ptr()
+                            .as_ref()
+                            .get_unchecked(slot)
+                            .assume_init_ref())
+                } {
+                    return Some(slot);
+                }
+
+                unsafe {
+                    prefetch(self.hashes_ptr().as_ref().as_ptr().add(base + next_index));
+                    prefetch(self.buckets_ptr().as_ref().as_ptr().add(base + next_index));
+                }
+            }
+
+            unsafe {
                 prefetch(
                     self.tags_ptr()
                         .as_ref()
@@ -1044,32 +1108,7 @@ impl<V> HashTable<V> {
                         .add(bucket * 16 + next_index * 16),
                 );
             }
-
-            let base = bucket * 16 + index * 16;
-            // SAFETY: We have ensured `base` is valid, calculated from a validated bucket
-            // and an index within the neighborhood.
-            let mut tags = unsafe { self.scan_tags(base, tag) };
-
-            while tags != 0 {
-                let idx = tags.trailing_zeros() as usize;
-                tags ^= 1 << idx;
-
-                let slot = base + idx;
-
-                // SAFETY: We have ensured `slot` is within bounds, as it is calculated from a
-                // validated base and index.
-                if unsafe {
-                    eq(self
-                        .buckets_ptr()
-                        .as_ref()
-                        .get_unchecked(slot)
-                        .assume_init_ref())
-                } {
-                    return Some(slot);
-                }
-            }
         }
-
         None
     }
 
@@ -3115,8 +3154,9 @@ mod tests {
     #[cfg(feature = "std")]
     fn histogram_output() {
         let state = HashState::default();
-        let mut table: HashTable<Item> = HashTable::with_capacity(10000);
-        for k in 0..table.capacity() as u64 {
+        let cap = ((1 << 19) as f32 * 0.87) as usize;
+        let mut table: HashTable<Item> = HashTable::with_capacity(cap);
+        for k in 0..cap as u64 {
             let hash = hash_key(&state, k);
             match table.entry(hash, |v| v.key == k) {
                 Entry::Vacant(v) => {
