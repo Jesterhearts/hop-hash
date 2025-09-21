@@ -17,10 +17,17 @@ fn target_load_factor_inverse(capacity: usize) -> usize {
 
 #[inline(always)]
 fn prefetch<T>(ptr: *const T) {
-    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse"))]
     unsafe {
         use core::arch::x86_64::*;
-        _mm_prefetch(ptr as *const i8, _MM_HINT_T0);
+        _mm_prefetch(ptr as *const i8, _MM_HINT_T1);
+    }
+    #[cfg(all(target_arch = "x86", target_feature = "sse"))]
+    {
+        use core::arch::x86::*;
+        unsafe {
+            _mm_prefetch(ptr as *const i8, _MM_HINT_T0);
+        }
     }
 }
 
@@ -1003,7 +1010,6 @@ impl<V> HashTable<V> {
         // the hash and `max_root_mask`.
         unsafe {
             prefetch(self.tags_ptr().as_ref().as_ptr().add(bucket * 16));
-            prefetch(self.buckets_ptr().as_ref().as_ptr().add(bucket * 16));
         };
 
         // SAFETY: Caller ensures that `bucket` is within bounds, as it is derived from
@@ -1016,22 +1022,38 @@ impl<V> HashTable<V> {
         };
 
         let tag = hashtag(hash);
+        let mut index;
+        let mut next_index = neighborhood_mask.trailing_zeros() as usize;
+
         while neighborhood_mask != 0 {
-            let index = neighborhood_mask.trailing_zeros() as usize;
-            neighborhood_mask &= !(1 << index);
+            index = next_index;
+            neighborhood_mask ^= 1 << index;
+            next_index = neighborhood_mask.trailing_zeros() as usize;
+
+            unsafe {
+                prefetch(
+                    self.buckets_ptr()
+                        .as_ref()
+                        .as_ptr()
+                        .add(bucket * 16 + index * 16),
+                );
+                prefetch(
+                    self.tags_ptr()
+                        .as_ref()
+                        .as_ptr()
+                        .add(bucket * 16 + next_index * 16),
+                );
+            }
 
             let base = bucket * 16 + index * 16;
             // SAFETY: We have ensured `base` is valid, calculated from a validated bucket
             // and an index within the neighborhood.
-            let tags = unsafe { self.scan_tags(base, tag) };
-            if tags == 0 {
-                continue;
-            }
+            let mut tags = unsafe { self.scan_tags(base, tag) };
 
-            for idx in 0..16 {
-                if tags & (1 << idx) == 0 {
-                    continue;
-                }
+            while tags != 0 {
+                let idx = tags.trailing_zeros() as usize;
+                tags ^= 1 << idx;
+
                 let slot = base + idx;
 
                 // SAFETY: We have ensured `slot` is within bounds, as it is calculated from a

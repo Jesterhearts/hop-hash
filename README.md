@@ -1,111 +1,45 @@
 # hop-hash
 
-A high-performance hash table implementation in Rust, utilizing a 16-way hopscotch hashing scheme with
-16-entry buckets, inspired by Google's Swiss Table design.
+A high-performance hash table implementation in Rust, utilizing a 16-way hopscotch hashing scheme.
 
 ## Features
 
-- **High Performance**: Optimized for fast lookups, insertions, and removals
-- **SIMD Acceleration**: Uses SSE2 instructions on x86_64 for parallel bucket scanning
-- **Predictable Performance**: Short, bounded probe distances with hopscotch hashing
-- **Zero Dependencies**: Pure Rust implementation with no external dependencies
+- **High Performance**: Optimized for fast lookups, insertions, and removals with a target load
+  factor of 98%.
+- **Bounded Probing**: Hopscotch hashing guarantees entries are within a small neighborhood of their
+  ideal location, ensuring short and predictable probe distances.
+- **SIMD Acceleration**: Leverages SSE2 instructions on `x86_64` for parallel scanning of 16-entry
+  buckets, significantly accelerating lookups.
+- **Efficient Memory Layout**: A compact memory structure with a low overhead of 2 bytes per entry
+  for metadata.
+- **Zero Dependencies**: Pure Rust implementation with no external dependencies.
 
-## Architecture
+## Design
 
-`hop-hash` is designed for high performance and low latency. It achieves this through a combination
-of modern hash table design principles:
+`hop-hash` combines several design principles for high performance:
 
-### 16-Way Hopscotch Hashing
-Each entry is guaranteed to be within a "neighborhood" of 16 entries from its ideal location (or
-rarely in an "overflow" area if there are enough hash collisions to fill an entire 16x16-entry
-bucket even with resizing). This keeps probe distances short and predictable, leading to fast
-lookups, insertions, and removals.
-
-### 16-Entry Buckets
-The hash table is organized into 16-entry buckets. This structure is highly amenable to SIMD
-optimizations, allowing for parallel probing of multiple slots at once:
-
-- Each bucket is 16-byte aligned for optimal SIMD access
-- Tag bytes enable fast filtering before expensive equality checks
-- Bucket-based organization improves cache locality
-
-### SIMD-Accelerated Lookups
-On `x86_64` architectures with SSE2 support, `hop-hash` uses SIMD instructions to scan for matching
-entries within a bucket in parallel, significantly speeding up lookups:
-
-- **Parallel Tag Scanning**: Compare 16 tag bytes simultaneously
-- **Efficient Filtering**: Quickly eliminate non-matching entries
-- **Fallback Support**: Graceful degradation on non-SIMD platforms
-
-### Overflow Handling
-In the rare case that an entry cannot be placed within its neighborhood it is stored in an overflow
-vector. This ensures that the table can handle high load factors and hash collisions without
-failing:
-
-- **Graceful Degradation**: Maintains correctness under extreme conditions
-- **Rare Occurrence**: Overflow is uncommon with good hash functions
-  - Only occurs when more than 256 entries hash to the same bucket *and* resizing fails to
-    redistribute them.
-- **Transparent API**: Overflow entries are accessible through the same interface
-
-## Performance Characteristics
-
-### Space Complexity
-
-- **Memory Overhead**: 2 bytes per entry for the tags + hop info. This implementation also stores
-  full hash values, adding 8 bytes per entry.
-- **Load Factor**: Targets a load factor of 98%.
-
-## Implementation Details
-
-### Memory Layout
-
-The hash table uses a carefully designed memory layout for optimal performance:
-
-```txt
-[HopInfo Array][Tag Bytes][Value Buckets][Hash Storage]
-```
-
-- **HopInfo Array**: Tracks which neighborhood slots are occupied
-- **Tag Bytes**: High bits of hash for fast filtering
-- **Value Buckets**: Actual stored values
-- **Hash Storage**: Full hash values for verification
-
-### Resize Strategy
-
-The table automatically resizes when the load factor exceeds 93.75%:
-
-1. **Double Capacity**: New table has 2x the bucket count
-2. **Rehash All Entries**: All entries are rehashed and reinserted
-3. **Does Not Preserve Order**: Insertion order is not preserved (by design)
-4. **Atomic Transition**: Old table is dropped only after successful migration
-
-### SIMD Optimizations
-
-On x86_64 with SSE2 support:
-
-- **Tag Scanning**: 16 tags compared in a single instruction
-- **Occupancy Checking**: Parallel detection of empty slots
-- **Branch Reduction**: Fewer conditional jumps in hot paths
+- **16-Way Hopscotch Hashing**: Each entry is stored within a "neighborhood" of 16 slots from its
+  initial bucket. This ensures that probe sequences are short and bounded.
+- **16-Entry Buckets**: The table is organized into 16-entry buckets, a structure amenable to SIMD
+  optimizations. Each bucket is 16-byte aligned, and entries are associated with an 8-bit tag
+  (derived from the hash) for fast filtering during lookups, minimizing expensive key comparisons.
+- **SIMD-Accelerated Lookups**: On `x86_64` architectures with SSE2 support, the implementation uses
+  SIMD instructions to compare 16 tags in parallel. This allows for the rapid elimination of
+  non-matching entries. A scalar fallback is provided for non-SIMD platforms.
+- **Overflow Handling**: In the rare event that an entry cannot be placed within its 16-slot
+  neighborhood (e.g., due to extreme hash collisions), it is stored in a separate overflow vector.
+  This maintains correctness under high load factors.
+- **Resize Strategy**: The table automatically doubles its capacity when the load factor exceeds
+  98%. All entries are rehashed and reinserted into the new table. Insertion order is not preserved.
 
 ## Limitations
 
-### Hash Quality Dependency
-Performance is highly dependent on hash function quality. Poor hash functions can lead to:
-- Increased collisions
-- More overflow entries
-- Degraded performance
-
-### Memory Usage
-- Not suitable for small tables, as it reserves space for an extra 16x16 buckets at a minimum above
-  the required capacity (although it does not alloc for size zero).
-- Memory usage grows in powers of 2
-- Targets a load factor of 98%
-
-### Key Constraints
-- Equality function must be consistent with hash
+- **Hash Function Dependency**: Performance is highly dependent on the quality of the hash function.
+  A poor hash function can lead to increased collisions and degrade performance.
+- **Memory Usage**: The table's capacity grows in powers of two and is not optimized for very small
+  data sets due to a minimum reservation size.
+- **Key Constraints**: The `Eq` and `Hash` implementations for keys must be consistent.
 
 ## License
 
-This project is licensed under the terms of the MIT license or the Apache License (Version 2.0), at
-your option.
+This project is dual-licensed under the MIT license and the Apache License (Version 2.0), at your option.
