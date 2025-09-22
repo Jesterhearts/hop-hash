@@ -14,8 +14,7 @@ use crate::hash_table::HashTable;
 ///
 /// # Performance Characteristics
 ///
-/// - **Memory**: 2 bytes per entry overhead, plus the size of `T` plus a u64
-///   for the hash
+/// - **Memory**: 2 bytes per entry overhead, plus the size of `T`.
 #[derive(Clone)]
 pub struct HashSet<T, S> {
     table: HashTable<T>,
@@ -252,12 +251,13 @@ where
     /// assert_eq!(set.len(), 2);
     /// ```
     pub fn shrink_to_fit(&mut self) {
-        self.table.shrink_to_fit();
+        self.table.shrink_to_fit(|k| self.hash_builder.hash_one(k));
     }
 
     /// Reserves capacity for at least `additional` more elements.
     pub fn reserve(&mut self, additional: usize) {
-        self.table.reserve(additional);
+        self.table
+            .reserve(additional, |k| self.hash_builder.hash_one(k));
     }
 
     /// Adds a value to the set.
@@ -291,7 +291,10 @@ where
     /// ```
     pub fn insert(&mut self, value: T) -> bool {
         let hash = self.hash_builder.hash_one(&value);
-        match self.table.entry(hash, |v| v == &value) {
+        match self
+            .table
+            .entry(hash, |v| v == &value, |v| self.hash_builder.hash_one(v))
+        {
             crate::hash_table::Entry::Occupied(_) => false,
             crate::hash_table::Entry::Vacant(entry) => {
                 entry.insert(value);

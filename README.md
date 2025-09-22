@@ -5,7 +5,7 @@ A high-performance hash table implementation in Rust, utilizing a 16-way hopscot
 ## Features
 
 - **High Performance**: Optimized for fast lookups, insertions, and removals with a target load
-  factor of 98%.
+  factor of 92%.
 - **Bounded Probing**: Hopscotch hashing guarantees entries are within a small neighborhood of their
   ideal location, ensuring short and predictable probe distances.
 - **SIMD Acceleration**: Leverages SSE2 instructions on `x86_64` for parallel scanning of 16-entry
@@ -30,7 +30,7 @@ A high-performance hash table implementation in Rust, utilizing a 16-way hopscot
   neighborhood (e.g., due to extreme hash collisions), it is stored in a separate overflow vector.
   This maintains correctness under high load factors.
 - **Resize Strategy**: The table automatically doubles its capacity when the load factor exceeds
-  98%. All entries are rehashed and reinserted into the new table. Insertion order is not preserved.
+  92%. All entries are rehashed and reinserted into the new table. Insertion order is not preserved.
 
 ## Limitations
 

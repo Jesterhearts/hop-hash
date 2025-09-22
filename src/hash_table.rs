@@ -7,12 +7,12 @@ use core::ptr::NonNull;
 
 #[inline(always)]
 fn target_load_factor(capacity: usize) -> usize {
-    (capacity as f32 * 0.98) as usize
+    (capacity as f32 * 0.92) as usize
 }
 
 #[inline(always)]
 fn target_load_factor_inverse(capacity: usize) -> usize {
-    (capacity as f32 / 0.98) as usize
+    (capacity as f32 / 0.92) as usize
 }
 
 #[inline(always)]
@@ -55,32 +55,33 @@ fn hashtag(tag: u64) -> u8 {
 /// Search for a movable index in the bubble range
 ///g
 /// # Safety
-/// - `hashes` must point to a slice of `MaybeUninit<u64>` with length strictly
+/// - `values` must point to a slice of `MaybeUninit<V>` with length strictly
 ///   greater than `empty_idx`.
 /// - The range `[bubble_base, empty_idx)` must be initialized.
-/// - Caller must ensure `0 <= bubble_base < empty_idx <= hashes.len()`.
+/// - Caller must ensure `0 <= bubble_base < empty_idx <= values.len()`.
 /// - `max_root_mask` must match the table’s current mask; roots are
 ///   `0..=max_root_mask` and map to absolute indices as `root*16`.
 #[inline(always)]
-unsafe fn find_next_movable_index(
-    hashes: &[MaybeUninit<u64>],
+unsafe fn find_next_movable_index<V>(
+    values: &[MaybeUninit<V>],
     bubble_base: usize,
     empty_idx: usize,
     max_root_mask: usize,
-) -> Option<usize> {
+    rehash: &dyn Fn(&V) -> u64,
+) -> Option<(usize, u64)> {
     for idx in bubble_base..empty_idx {
         // SAFETY: We have validated that `idx` is within the `bubble_base..empty_idx`
-        // range. The caller guarantees `empty_idx <= hashes.len()`, ensuring
+        // range. The caller guarantees `empty_idx <= values.len()`, ensuring
         // `get_unchecked` is safe. Additionally, the caller ensures elements in
         // `[bubble_base, empty_idx)` are initialized, making `assume_init_read`
         // safe.
         unsafe {
-            let hash = hashes.get_unchecked(idx).assume_init_read();
+            let hash = rehash(values.get_unchecked(idx).assume_init_ref());
             let hopmap_index = (hash as usize & max_root_mask) * 16;
 
             let distance = empty_idx.wrapping_sub(hopmap_index);
             if distance < HOP_RANGE * 16 {
-                return Some(idx);
+                return Some((idx, hash));
             }
         }
     }
@@ -220,14 +221,13 @@ impl HopInfo {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 struct DataLayout {
     layout: Layout,
     hopmap_offset: usize,
     tags_offset: usize,
 
     buckets_offset: usize,
-    hashes_offset: usize,
 }
 
 impl DataLayout {
@@ -238,20 +238,16 @@ impl DataLayout {
             Layout::array::<u8>(capacity.base * 16).expect("allocation size overflow");
         let buckets_layout =
             Layout::array::<MaybeUninit<V>>(capacity.base * 16).expect("allocation size overflow");
-        let hashes_layout = Layout::array::<MaybeUninit<u64>>(capacity.base * 16)
-            .expect("allocation size overflow");
 
         let (layout, hopmap_offset) = Layout::new::<()>().extend(hopmap_layout).unwrap();
         let (layout, tags_offset) = layout.extend(tags_layout).unwrap();
         let (layout, buckets_offset) = layout.extend(buckets_layout).unwrap();
-        let (layout, hashes_offset) = layout.extend(hashes_layout).unwrap();
 
         DataLayout {
             layout,
             hopmap_offset,
             tags_offset,
             buckets_offset,
-            hashes_offset,
         }
     }
 }
@@ -323,51 +319,12 @@ impl DebugStats {
 ///
 /// ## Performance Characteristics
 ///
-/// - **Memory**: 2 bytes per entry overhead, plus the size of `V` plus a u64
-///   for the hash.
-///
-/// ## Example
-///
-/// ```rust
-/// # use core::hash::Hash;
-/// # use core::hash::Hasher;
-/// #
-/// # use hop_hash::hash_table::HashTable;
-/// # use siphasher::sip::SipHasher;
-/// #
-/// # #[derive(Debug, PartialEq)]
-/// # struct Person {
-/// #     id: u64,
-/// #     name: String,
-/// # }
-/// #
-/// # fn hash_id(id: u64) -> u64 {
-/// #     let mut hasher = SipHasher::new();
-/// #     id.hash(&mut hasher);
-/// #     hasher.finish()
-/// # }
-///
-/// let mut table = HashTable::with_capacity(100);
-/// let hash = hash_id(123);
-///
-/// // Insert a person
-/// match table.entry(hash, |p: &Person| p.id == 123) {
-///     hop_hash::hash_table::Entry::Vacant(entry) => {
-///         entry.insert(Person {
-///             id: 123,
-///             name: "Alice".to_string(),
-///         });
-///     }
-///     hop_hash::hash_table::Entry::Occupied(_) => {
-///         println!("Person already exists");
-///     }
-/// }
-/// ```
+/// - **Memory**: 2 bytes per entry overhead, plus the size of `V`.
 pub struct HashTable<V> {
     layout: DataLayout,
     alloc: NonNull<u8>,
 
-    overflow: Vec<(u64, V)>,
+    overflow: Vec<V>,
 
     populated: usize,
     max_pop: usize,
@@ -446,42 +403,49 @@ where
     V: Clone,
 {
     fn clone(&self) -> Self {
-        let mut new_table = Self::with_capacity(self.max_pop);
+        let mut new_table = Self {
+            layout: self.layout,
+            alloc: if self.layout.layout.size() == 0 {
+                NonNull::dangling()
+            } else {
+                // SAFETY: We have validated that the layout size is non-zero. The `alloc`
+                // function returns a valid pointer, and we handle allocation errors
+                // if it returns null.
+                unsafe {
+                    let raw_alloc = alloc::alloc::alloc(self.layout.layout);
+                    if raw_alloc.is_null() {
+                        handle_alloc_error(self.layout.layout);
+                    }
+
+                    core::ptr::copy_nonoverlapping(
+                        self.alloc.as_ptr(),
+                        raw_alloc,
+                        self.layout.buckets_offset,
+                    );
+
+                    NonNull::new_unchecked(raw_alloc)
+                }
+            },
+            overflow: Vec::new(),
+            populated: self.populated,
+            max_pop: self.max_pop,
+            max_root_mask: self.max_root_mask,
+            _phantom: core::marker::PhantomData,
+        };
 
         // SAFETY: We have ensured that both tables have valid allocations and
         // the same capacity.
         unsafe {
             let src_buckets = self.buckets_ptr().as_ref();
             let dst_buckets = new_table.buckets_ptr().as_mut();
-            let src_hashes = self.hashes_ptr().as_ref();
-            let dst_hashes = new_table.hashes_ptr().as_mut();
             let src_tags = self.tags_ptr().as_ref();
-            let dst_tags = new_table.tags_ptr().as_mut();
 
             for i in 0..src_tags.len() {
                 let tag = *src_tags.get_unchecked(i);
-                *dst_tags.get_unchecked_mut(i) = tag;
-
                 if tag != EMPTY {
-                    let value = src_buckets.get_unchecked(i).assume_init_ref().clone();
-                    let hash = src_hashes.get_unchecked(i).assume_init_read();
-                    *dst_buckets.get_unchecked_mut(i) = MaybeUninit::new(value);
-                    *dst_hashes.get_unchecked_mut(i) = MaybeUninit::new(hash);
-                    new_table.populated += 1;
-
-                    let hop_bucket = (hash as usize & new_table.max_root_mask) * 16;
-                    let offset = i - hop_bucket;
-                    let n_index = offset / 16;
-                    // SAFETY: We have validated that `i` is a valid slot index from
-                    // `hop_bucket` is also valid, and `n_index` is derived from
-                    // `offset` which is guaranteed to be less than `HOP_RANGE * 16`
-                    new_table
-                        .hopmap_ptr()
-                        .as_mut()
-                        .get_unchecked_mut(hop_bucket / 16)
-                        .set(n_index);
-
-                    debug_assert!(new_table.populated <= new_table.max_pop);
+                    dst_buckets
+                        .get_unchecked_mut(i)
+                        .write(src_buckets.get_unchecked(i).assume_init_ref().clone());
                 }
             }
             new_table.overflow = self.overflow.clone();
@@ -522,16 +486,6 @@ impl<V> HashTable<V> {
     ///
     /// The actual capacity may be larger than requested due to the bucket-based
     /// organization.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// # use hop_hash::hash_table::HashTable;
-    /// #
-    /// // Create a table that can hold at least 100 items without resizing
-    /// let table: HashTable<String> = HashTable::with_capacity(100);
-    /// assert!(table.capacity() >= 100);
-    /// ```
     pub fn with_capacity(capacity: usize) -> Self {
         let capacity: Capacity = target_load_factor_inverse(capacity.div_ceil(16)).into();
 
@@ -594,20 +548,6 @@ impl<V> HashTable<V> {
         }
     }
 
-    fn hashes_ptr(&self) -> NonNull<[MaybeUninit<u64>]> {
-        // SAFETY: Allocation is valid and properly sized for the hashes slice
-        unsafe {
-            NonNull::slice_from_raw_parts(
-                self.alloc.add(self.layout.hashes_offset).cast(),
-                if self.layout.layout.size() == 0 {
-                    0
-                } else {
-                    (self.max_root_mask.wrapping_add(1) + HOP_RANGE) * 16
-                },
-            )
-        }
-    }
-
     fn tags_ptr(&self) -> NonNull<[u8]> {
         // SAFETY: Allocation is valid and properly sized for the tags slice
         unsafe {
@@ -626,34 +566,6 @@ impl<V> HashTable<V> {
     ///
     /// The iterator yields `&V` references in an arbitrary order.
     /// The iteration order is not specified and may change between versions.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// # use core::hash::Hash;
-    /// # use core::hash::Hasher;
-    /// #
-    /// # use hop_hash::hash_table::HashTable;
-    /// # use siphasher::sip::SipHasher;
-    /// #
-    /// # fn hash_str(s: &str) -> u64 {
-    /// #     let mut hasher = SipHasher::new();
-    /// #     s.hash(&mut hasher);
-    /// #     hasher.finish()
-    /// # }
-    /// #
-    /// let mut table = HashTable::with_capacity(10);
-    /// table
-    ///     .entry(hash_str("key1"), |s: &String| s == "key1")
-    ///     .or_insert("key1".to_string());
-    /// table
-    ///     .entry(hash_str("key2"), |s: &String| s == "key2")
-    ///     .or_insert("key1".to_string());
-    ///
-    /// for value in table.iter() {
-    ///     println!("Value: {}", value);
-    /// }
-    /// ```
     pub fn iter(&self) -> Iter<'_, V> {
         Iter {
             table: self,
@@ -666,31 +578,6 @@ impl<V> HashTable<V> {
     ///
     /// After calling `drain()`, the table will be empty. The iterator yields
     /// owned values in an arbitrary order.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// # use core::hash::Hash;
-    /// # use core::hash::Hasher;
-    /// #
-    /// # use hop_hash::hash_table::HashTable;
-    /// # use siphasher::sip::SipHasher;
-    /// #
-    /// # fn hash_str(s: &str) -> u64 {
-    /// #     let mut hasher = SipHasher::new();
-    /// #     s.hash(&mut hasher);
-    /// #     hasher.finish()
-    /// # }
-    /// #
-    /// let mut table = HashTable::with_capacity(10);
-    /// table
-    ///     .entry(hash_str("key1"), |s: &String| s == "key1")
-    ///     .or_insert("key1".to_string());
-    ///
-    /// let values: Vec<String> = table.drain().collect();
-    /// assert!(table.is_empty());
-    /// assert_eq!(values.len(), 1);
-    /// ```
     pub fn drain(&mut self) -> Drain<'_, V> {
         Drain {
             table: self,
@@ -699,42 +586,11 @@ impl<V> HashTable<V> {
     }
 
     /// Returns `true` if the table contains no elements.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// # use hop_hash::hash_table::HashTable;
-    /// #
-    /// let table: HashTable<i32> = HashTable::with_capacity(10);
-    /// assert!(table.is_empty());
-    /// ```
     pub fn is_empty(&self) -> bool {
         self.populated == 0
     }
 
     /// Returns the number of elements in the table.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// # use core::hash::Hash;
-    /// # use core::hash::Hasher;
-    /// #
-    /// # use hop_hash::hash_table::HashTable;
-    /// # use siphasher::sip::SipHasher;
-    /// #
-    /// # fn hash_u64(n: u64) -> u64 {
-    /// #     let mut hasher = SipHasher::new();
-    /// #     n.hash(&mut hasher);
-    /// #     hasher.finish()
-    /// # }
-    /// #
-    /// let mut table = HashTable::with_capacity(10);
-    /// assert_eq!(table.len(), 0);
-    ///
-    /// table.entry(hash_u64(1), |&n: &u64| n == 1).or_insert(1);
-    /// assert_eq!(table.len(), 1);
-    /// ```
     pub fn len(&self) -> usize {
         self.populated
     }
@@ -744,31 +600,6 @@ impl<V> HashTable<V> {
     /// This operation preserves the table's allocated capacity. All values are
     /// properly dropped if they implement `Drop`. After calling `clear()`, the
     /// table will be empty but maintain its current capacity.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// # use core::hash::Hash;
-    /// # use core::hash::Hasher;
-    /// #
-    /// # use hop_hash::hash_table::HashTable;
-    /// # use siphasher::sip::SipHasher;
-    /// #
-    /// # fn hash_u64(n: u64) -> u64 {
-    /// #     let mut hasher = SipHasher::new();
-    /// #     n.hash(&mut hasher);
-    /// #     hasher.finish()
-    /// # }
-    /// #
-    /// let mut table = HashTable::with_capacity(10);
-    /// table.entry(hash_u64(1), |&n: &u64| n == 1).or_insert(1);
-    /// table.entry(hash_u64(2), |&n: &u64| n == 2).or_insert(2);
-    /// assert_eq!(table.len(), 2);
-    ///
-    /// table.clear();
-    /// assert_eq!(table.len(), 0);
-    /// assert!(table.is_empty());
-    /// ```
     pub fn clear(&mut self) {
         // SAFETY: We have ensured that values are properly initialized before being
         // dropped.
@@ -806,25 +637,7 @@ impl<V> HashTable<V> {
     ///
     /// If the table is empty, it will be completely deallocated and reset to
     /// a zero-capacity state.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use hop_hash::HashTable;
-    ///
-    /// let mut table: HashTable<i32> = HashTable::with_capacity(1000);
-    /// assert!(table.capacity() >= 1000);
-    ///
-    /// // Add a few elements
-    /// table.entry(42, |&v| v == 5).or_insert(5);
-    /// table.entry(123, |&v| v == 10).or_insert(10);
-    ///
-    /// // Shrink to fit
-    /// table.shrink_to_fit();
-    /// assert!(table.capacity() < 1000);
-    /// assert!(table.capacity() >= 2);
-    /// ```
-    pub fn shrink_to_fit(&mut self) {
+    pub fn shrink_to_fit(&mut self, rehash: impl Fn(&V) -> u64) {
         if self.populated == 0 && self.overflow.is_empty() {
             if self.layout.layout.size() != 0 {
                 // SAFETY: We have ensured that the allocation is valid before
@@ -844,7 +657,7 @@ impl<V> HashTable<V> {
         let required = self.populated + self.overflow.len();
         let new_capacity: Capacity = target_load_factor_inverse(required.div_ceil(16)).into();
         if new_capacity.max_root_mask() < self.max_root_mask {
-            self.do_resize_rehash(new_capacity);
+            self.do_resize_rehash(new_capacity, &rehash);
         }
     }
 
@@ -859,27 +672,11 @@ impl<V> HashTable<V> {
     ///
     /// * `additional` - The number of additional elements the table should be
     ///   able to hold
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// # use hop_hash::hash_table::HashTable;
-    /// #
-    /// let mut table: HashTable<i32> = HashTable::with_capacity(15);
-    /// for i in 0..15 {
-    ///     table.entry(i as u64, |&n: &i32| n == i).or_insert(i);
-    /// }
-    /// let original_capacity = table.capacity();
-    ///
-    /// // Reserve space for 50 more elements
-    /// table.reserve(50);
-    /// assert!(table.capacity() >= original_capacity + 50);
-    /// ```
-    pub fn reserve(&mut self, additional: usize) {
+    pub fn reserve(&mut self, additional: usize, rehash: impl Fn(&V) -> u64) {
         let required = self.populated.saturating_add(additional);
         if required > self.max_pop {
             let new_capacity: Capacity = target_load_factor_inverse(required.div_ceil(16)).into();
-            self.do_resize_rehash(new_capacity);
+            self.do_resize_rehash(new_capacity, &rehash);
         }
     }
 
@@ -894,33 +691,6 @@ impl<V> HashTable<V> {
     /// * `hash` - The hash value of the entry to remove
     /// * `eq` - A predicate function that returns `true` for the value to
     ///   remove
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// # use core::hash::Hash;
-    /// # use core::hash::Hasher;
-    /// #
-    /// # use hop_hash::hash_table::HashTable;
-    /// # use siphasher::sip::SipHasher;
-    /// #
-    /// # fn hash_u64(n: u64) -> u64 {
-    /// #     let mut hasher = SipHasher::new();
-    /// #     n.hash(&mut hasher);
-    /// #     hasher.finish()
-    /// # }
-    /// #
-    /// let mut table = HashTable::with_capacity(10);
-    /// table.entry(hash_u64(42), |&n: &u64| n == 42).or_insert(42);
-    ///
-    /// let removed = table.remove(hash_u64(42), |&n| n == 42);
-    /// assert_eq!(removed, Some(42));
-    /// assert!(table.is_empty());
-    ///
-    /// // Removing non-existent value returns None
-    /// let not_found = table.remove(hash_u64(99), |&n| n == 99);
-    /// assert_eq!(not_found, None);
-    /// ```
     pub fn remove(&mut self, hash: u64, eq: impl Fn(&V) -> bool) -> Option<V> {
         if self.populated == 0 {
             return None;
@@ -960,11 +730,11 @@ impl<V> HashTable<V> {
             return None;
         }
 
-        for (idx, (_, overflow)) in self.overflow.iter().enumerate() {
+        for (idx, overflow) in self.overflow.iter().enumerate() {
             if eq(overflow) {
                 self.populated -= 1;
                 let value = self.overflow.swap_remove(idx);
-                return Some(value.1);
+                return Some(value);
             }
         }
 
@@ -981,44 +751,17 @@ impl<V> HashTable<V> {
     ///
     /// * `hash` - The hash value for the entry
     /// * `eq` - A predicate function that returns `true` for matching values
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// # use core::hash::Hash;
-    /// # use core::hash::Hasher;
-    /// #
-    /// # use hop_hash::hash_table::HashTable;
-    /// # use siphasher::sip::SipHasher;
-    /// #
-    /// # fn hash_str(s: &str) -> u64 {
-    /// #     let mut hasher = SipHasher::new();
-    /// #     s.hash(&mut hasher);
-    /// #     hasher.finish()
-    /// # }
-    /// #
-    /// let mut table = HashTable::with_capacity(10);
-    /// let hash = hash_str("hello");
-    ///
-    /// // Insert or update pattern
-    /// match table.entry(hash, |s: &String| s == "hello") {
-    ///     hop_hash::hash_table::Entry::Vacant(entry) => {
-    ///         entry.insert("world".to_string());
-    ///     }
-    ///     hop_hash::hash_table::Entry::Occupied(mut entry) => {
-    ///         *entry.get_mut() = "updated".to_string();
-    ///     }
-    /// }
-    ///
-    /// // Or use the convenience method
-    /// table
-    ///     .entry(hash, |s: &String| s == "hello")
-    ///     .or_insert("hello".to_string());
-    /// ```
     #[inline(always)]
-    pub fn entry(&mut self, hash: u64, eq: impl Fn(&V) -> bool) -> Entry<'_, V> {
-        self.maybe_resize_rehash();
-        self.entry_impl(hash, eq)
+    pub fn entry(
+        &mut self,
+        hash: u64,
+        eq: impl Fn(&V) -> bool,
+        rehash: impl Fn(&V) -> u64,
+    ) -> Entry<'_, V> {
+        self.maybe_resize_rehash(&rehash);
+        // SAFETY: We have ensured that the table is properly initialized and has
+        // sufficient capacity through `maybe_resize_rehash`.
+        unsafe { self.entry_impl(hash, eq, &rehash) }
     }
 
     /// Search the neighborhood of a given bucket for a matching value.
@@ -1034,8 +777,19 @@ impl<V> HashTable<V> {
         bucket: usize,
         eq: impl Fn(&V) -> bool,
     ) -> Option<usize> {
+        let tag = hashtag(hash);
+
+        let base = bucket * 16;
+        // SAFETY: We have ensured `base` is valid, calculated from a validated bucket
+        // and an index within the neighborhood.
+        if let Some(value) = unsafe { self.search_tags(&eq, tag, base) } {
+            return Some(value);
+        }
+
+        // SAFETY: Caller ensures that `bucket` is within bounds, as it is derived from
+        // the hash and `max_root_mask`.
         unsafe {
-            prefetch(self.hopmap_ptr().as_ref().as_ptr().add(bucket));
+            prefetch(self.tags_ptr().as_ref().as_ptr().add(bucket * 16 + 16));
         }
 
         // SAFETY: Caller ensures that `bucket` is within bounds, as it is derived from
@@ -1047,13 +801,6 @@ impl<V> HashTable<V> {
                 .candidates()
         };
 
-        // SAFETY: Caller ensures that `bucket` is within bounds, as it is derived from
-        // the hash and `max_root_mask`.
-        unsafe {
-            prefetch(self.tags_ptr().as_ref().as_ptr().add(bucket * 16));
-        };
-
-        let tag = hashtag(hash);
         let mut index;
         let mut next_index = neighborhood_mask.trailing_zeros() as usize;
 
@@ -1062,41 +809,13 @@ impl<V> HashTable<V> {
             neighborhood_mask ^= 1 << index;
             next_index = neighborhood_mask.trailing_zeros() as usize;
 
-            let base = bucket * 16 + index * 16;
+            if index != 0 {
+                let base = bucket * 16 + index * 16;
 
-            // SAFETY: We have ensured `base` is valid, calculated from a validated bucket
-            // and an index within the neighborhood.
-            let mut tags = unsafe { self.scan_tags(base, tag) };
-
-            let mut index;
-            let mut next_index = tags.trailing_zeros() as usize;
-            while tags != 0 {
-                index = next_index;
-                tags ^= 1 << index;
-                next_index = tags.trailing_zeros() as usize;
-
-                let slot = base + index;
-
-                // SAFETY: We have ensured `slot` is within bounds, as it is calculated from a
-                // validated base and index.
-                if unsafe {
-                    self.hashes_ptr()
-                        .as_ref()
-                        .get_unchecked(slot)
-                        .assume_init_ref()
-                        == &hash
-                        && eq(self
-                            .buckets_ptr()
-                            .as_ref()
-                            .get_unchecked(slot)
-                            .assume_init_ref())
-                } {
-                    return Some(slot);
-                }
-
-                unsafe {
-                    prefetch(self.hashes_ptr().as_ref().as_ptr().add(base + next_index));
-                    prefetch(self.buckets_ptr().as_ref().as_ptr().add(base + next_index));
+                // SAFETY: We have ensured `base` is valid, calculated from a validated bucket
+                // and an index within the neighborhood.
+                if let Some(value) = unsafe { self.search_tags(&eq, tag, base) } {
+                    return Some(value);
                 }
             }
 
@@ -1109,6 +828,46 @@ impl<V> HashTable<V> {
                 );
             }
         }
+        None
+    }
+
+    /// Search 16 tags starting at base for matching tags and values.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure `base` is within a valid range, such that
+    /// `base + 16` does not exceed the bounds of the tags array or buckets
+    /// array.
+    #[inline(always)]
+    unsafe fn search_tags(&self, eq: impl Fn(&V) -> bool, tag: u8, base: usize) -> Option<usize> {
+        let mut tags = unsafe { self.scan_tags(base, tag) };
+        let mut index;
+        let mut next_index = tags.trailing_zeros() as usize;
+
+        while tags != 0 {
+            index = next_index;
+            tags ^= 1 << index;
+            next_index = tags.trailing_zeros() as usize;
+
+            let slot = base + index;
+
+            // SAFETY: We have ensured `slot` is within bounds, as it is calculated from a
+            // validated base and index.
+            if unsafe {
+                eq(self
+                    .buckets_ptr()
+                    .as_ref()
+                    .get_unchecked(slot)
+                    .assume_init_ref())
+            } {
+                return Some(slot);
+            }
+
+            unsafe {
+                prefetch(self.buckets_ptr().as_ref().as_ptr().add(base + next_index));
+            }
+        }
+
         None
     }
 
@@ -1179,8 +938,18 @@ impl<V> HashTable<V> {
         hop_bucket * 16 + n_index
     }
 
+    /// Internal entry implementation that performs the actual lookup.
+    ///
+    /// # Safety
+    ///
+    /// The capacity must not be zero.
     #[inline]
-    fn entry_impl(&mut self, hash: u64, eq: impl Fn(&V) -> bool) -> Entry<'_, V> {
+    unsafe fn entry_impl(
+        &mut self,
+        hash: u64,
+        eq: impl Fn(&V) -> bool,
+        rehash: &dyn Fn(&V) -> u64,
+    ) -> Entry<'_, V> {
         let hop_bucket = self.hopmap_index(hash);
 
         // SAFETY: We have ensured that `hop_bucket` is within bounds, as it is derived
@@ -1198,11 +967,8 @@ impl<V> HashTable<V> {
         if !self.overflow.is_empty() {
             #[cold]
             #[inline(never)]
-            fn search_overflow<V>(
-                overflow: &[(u64, V)],
-                eq: &impl Fn(&V) -> bool,
-            ) -> Option<usize> {
-                for (idx, (_, overflow)) in overflow.iter().enumerate() {
+            fn search_overflow<V>(overflow: &[V], eq: &impl Fn(&V) -> bool) -> Option<usize> {
+                for (idx, overflow) in overflow.iter().enumerate() {
                     if eq(overflow) {
                         return Some(idx);
                     }
@@ -1221,7 +987,7 @@ impl<V> HashTable<V> {
 
         // SAFETY: We have ensured `hop_bucket` is within bounds, as it is derived from
         // the hash and mask.
-        Entry::Vacant(unsafe { self.do_vacant_lookup(hash, hop_bucket) })
+        Entry::Vacant(unsafe { self.do_vacant_lookup(hash, hop_bucket, rehash) })
     }
 
     /// Perform a vacant lookup, finding or creating a suitable slot for
@@ -1231,16 +997,22 @@ impl<V> HashTable<V> {
     ///
     /// The caller must ensure that `hop_bucket` is within the bounds of the
     /// hopmap array.
-    unsafe fn do_vacant_lookup(&mut self, hash: u64, hop_bucket: usize) -> VacantEntry<'_, V> {
+    #[inline]
+    unsafe fn do_vacant_lookup(
+        &mut self,
+        hash: u64,
+        hop_bucket: usize,
+        rehash: &dyn Fn(&V) -> u64,
+    ) -> VacantEntry<'_, V> {
         debug_assert!(hop_bucket <= self.max_root_mask);
         let empty_idx = unsafe { self.find_next_unoccupied(self.absolute_index(hop_bucket, 0)) };
 
         if empty_idx.is_none()
             || empty_idx.unwrap() >= self.absolute_index(self.max_root_mask + 1 + HOP_RANGE, 0)
         {
-            self.resize_rehash();
+            self.resize_rehash(rehash);
             // SAFETY: We have ensured `hop_bucket` is within the hopmap bounds.
-            return unsafe { self.do_vacant_lookup(hash, self.hopmap_index(hash)) };
+            return unsafe { self.do_vacant_lookup(hash, self.hopmap_index(hash), rehash) };
         }
 
         let mut absolute_empty_idx = empty_idx.unwrap();
@@ -1263,23 +1035,18 @@ impl<V> HashTable<V> {
 
             // SAFETY: We have ensured that `bubble_base` and `absolute_empty_idx` are
             // within the table bounds.
-            if let Some(absolute_idx) = unsafe {
+            if let Some((absolute_idx, moved_hash)) = unsafe {
                 find_next_movable_index(
-                    self.hashes_ptr().as_ref(),
+                    self.buckets_ptr().as_ref(),
                     bubble_base,
                     absolute_empty_idx,
                     self.max_root_mask,
+                    rehash,
                 )
             } {
                 // SAFETY: We have validated `absolute_idx` through `find_next_movable_index`,
                 // ensuring it is within bounds.
                 unsafe {
-                    let moved_hash = self
-                        .hashes_ptr()
-                        .as_ref()
-                        .get_unchecked(absolute_idx)
-                        .assume_init_read();
-
                     let buckets_ptr = self.buckets_ptr().as_mut().as_mut_ptr();
                     debug_assert_ne!(absolute_idx, absolute_empty_idx);
 
@@ -1288,10 +1055,6 @@ impl<V> HashTable<V> {
                         buckets_ptr.add(absolute_empty_idx),
                         1,
                     );
-                    self.hashes_ptr()
-                        .as_mut()
-                        .get_unchecked_mut(absolute_empty_idx)
-                        .write(moved_hash);
 
                     let hopmap_root = self.hopmap_index(moved_hash);
                     let hopmap_abs_idx = self.absolute_index(hopmap_root, 0);
@@ -1336,9 +1099,9 @@ impl<V> HashTable<V> {
                     };
                 }
 
-                self.resize_rehash();
+                self.resize_rehash(rehash);
                 // SAFETY: We have ensured `hop_bucket` is within the hopmap bounds.
-                return unsafe { self.do_vacant_lookup(hash, self.hopmap_index(hash)) };
+                return unsafe { self.do_vacant_lookup(hash, self.hopmap_index(hash), rehash) };
             }
         }
 
@@ -1469,33 +1232,6 @@ impl<V> HashTable<V> {
     ///
     /// * `hash` - The hash value to search for
     /// * `eq` - A predicate function that returns `true` for the desired value
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// # use core::hash::Hash;
-    /// # use core::hash::Hasher;
-    /// #
-    /// # use hop_hash::hash_table::HashTable;
-    /// # use siphasher::sip::SipHasher;
-    /// #
-    /// # fn hash_u64(n: u64) -> u64 {
-    /// #     let mut hasher = SipHasher::new();
-    /// #     n.hash(&mut hasher);
-    /// #     hasher.finish()
-    /// # }
-    /// #
-    /// let mut table = HashTable::with_capacity(10);
-    /// table.entry(hash_u64(42), |&n: &u64| n == 42).or_insert(42);
-    ///
-    /// // Find existing value
-    /// let found = table.find(hash_u64(42), |&n| n == 42);
-    /// assert_eq!(found, Some(&42));
-    ///
-    /// // Search for non-existent value
-    /// let not_found = table.find(hash_u64(99), |&n| n == 99);
-    /// assert_eq!(not_found, None);
-    /// ```
     #[inline]
     pub fn find(&self, hash: u64, eq: impl Fn(&V) -> bool) -> Option<&V> {
         if self.populated == 0 {
@@ -1527,10 +1263,7 @@ impl<V> HashTable<V> {
     #[cold]
     #[inline(never)]
     fn find_overflow(&self, eq: impl Fn(&V) -> bool) -> Option<&V> {
-        self.overflow
-            .iter()
-            .map(|(_, overflow)| overflow)
-            .find(|&overflow| eq(overflow))
+        self.overflow.iter().find(|overflow| eq(overflow))
     }
 
     /// Finds a value in the table by hash and equality predicate, returning a
@@ -1544,37 +1277,6 @@ impl<V> HashTable<V> {
     ///
     /// * `hash` - The hash value to search for
     /// * `eq` - A predicate function that returns `true` for the desired value
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// # use core::hash::Hash;
-    /// # use core::hash::Hasher;
-    /// #
-    /// # use hop_hash::hash_table::HashTable;
-    /// # use siphasher::sip::SipHasher;
-    /// #
-    /// # fn hash_u64(n: u64) -> u64 {
-    /// #     let mut hasher = SipHasher::new();
-    /// #     n.hash(&mut hasher);
-    /// #     hasher.finish()
-    /// # }
-    /// #
-    /// let mut table = HashTable::with_capacity(10);
-    /// table.entry(hash_u64(42), |&n: &u64| n == 42).or_insert(42);
-    ///
-    /// // Find and modify existing value
-    /// if let Some(value) = table.find_mut(hash_u64(42), |&n| n == 42) {
-    ///     *value = 100;
-    /// }
-    ///
-    /// let found = table.find(hash_u64(42), |&n| n == 100);
-    /// assert_eq!(found, Some(&100));
-    ///
-    /// // Search for non-existent value
-    /// let not_found = table.find_mut(hash_u64(99), |&n| n == 99);
-    /// assert_eq!(not_found, None);
-    /// ```
     #[inline]
     pub fn find_mut(&mut self, hash: u64, eq: impl Fn(&V) -> bool) -> Option<&mut V> {
         if self.populated == 0 {
@@ -1606,30 +1308,27 @@ impl<V> HashTable<V> {
     #[cold]
     #[inline(never)]
     fn find_overflow_mut(&mut self, eq: impl Fn(&V) -> bool) -> Option<&mut V> {
-        self.overflow
-            .iter_mut()
-            .map(|(_, overflow)| overflow)
-            .find(|overflow| eq(overflow))
+        self.overflow.iter_mut().find(|overflow| eq(overflow))
     }
 
     #[inline]
-    fn maybe_resize_rehash(&mut self) {
+    fn maybe_resize_rehash(&mut self, rehash: &dyn Fn(&V) -> u64) {
         if self.populated >= self.max_pop {
-            self.resize_rehash();
+            self.resize_rehash(rehash);
         }
     }
 
     #[inline]
     #[cold]
-    fn resize_rehash(&mut self) {
+    fn resize_rehash(&mut self, rehash: &dyn Fn(&V) -> u64) {
         let capacity = self.max_root_mask.wrapping_add(1).max(HOP_RANGE) + 1;
         let capacity: Capacity = capacity.into();
 
-        self.do_resize_rehash(capacity);
+        self.do_resize_rehash(capacity, rehash);
     }
 
     #[inline]
-    fn do_resize_rehash(&mut self, capacity: Capacity) {
+    fn do_resize_rehash(&mut self, capacity: Capacity, rehash: &dyn Fn(&V) -> u64) {
         debug_assert!(
             capacity.max_root_mask() != self.max_root_mask || self.max_root_mask == usize::MAX
         );
@@ -1676,12 +1375,6 @@ impl<V> HashTable<V> {
                 old_empty_words,
             )
         };
-        let old_hashes: NonNull<[MaybeUninit<u64>]> = unsafe {
-            NonNull::slice_from_raw_parts(
-                old_alloc.add(old_layout.hashes_offset).cast(),
-                old_base * 16,
-            )
-        };
         let old_buckets: NonNull<[MaybeUninit<V>]> = unsafe {
             NonNull::slice_from_raw_parts(
                 old_alloc.add(old_layout.buckets_offset).cast(),
@@ -1692,10 +1385,9 @@ impl<V> HashTable<V> {
         // SAFETY: Moving initialized values from old table, pointers valid from
         // allocation
         unsafe {
-            // Ownership note: We move values (V) and hashes (u64) out of the old
-            // allocation into the new one. The old allocation is then deallocated without
-            // running destructors for moved-out contents; only the new table will drop
-            // values.
+            // Ownership note: We move values (V) out of the old allocation into the new
+            // one. The old allocation is then deallocated without running destructors for
+            // moved-out contents; only the new table will drop values.
             self.populated = 0;
 
             let mut pending_indexes = Vec::with_capacity(old_max_root * 16);
@@ -1704,14 +1396,16 @@ impl<V> HashTable<V> {
                     continue;
                 }
 
-                let hash = old_hashes
-                    .as_ref()
-                    .get_unchecked(bucket_index)
-                    .assume_init_read();
+                let hash = rehash(
+                    old_buckets
+                        .as_ref()
+                        .get_unchecked(bucket_index)
+                        .assume_init_ref(),
+                );
                 let bucket = self.hopmap_index(hash);
 
                 if self.is_occupied(self.absolute_index(bucket, 0)) {
-                    pending_indexes.push(bucket_index);
+                    pending_indexes.push((bucket_index, hash));
                     continue;
                 }
 
@@ -1725,28 +1419,16 @@ impl<V> HashTable<V> {
                         .as_mut_ptr(),
                     1,
                 );
-                core::ptr::copy_nonoverlapping(
-                    old_hashes.as_ref().get_unchecked(bucket_index).as_ptr(),
-                    self.hashes_ptr()
-                        .as_mut()
-                        .get_unchecked_mut(self.absolute_index(bucket, 0))
-                        .as_mut_ptr(),
-                    1,
-                );
                 self.set_occupied(self.absolute_index(bucket, 0), hashtag(hash));
                 self.hopmap_ptr().as_mut().get_unchecked_mut(bucket).set(0);
             }
 
             let mut needs_shuffle = Vec::with_capacity(pending_indexes.len());
-            for old_index in pending_indexes {
-                let hash = old_hashes
-                    .as_ref()
-                    .get_unchecked(old_index)
-                    .assume_init_read();
+            for (old_index, hash) in pending_indexes {
                 let bucket = self.hopmap_index(hash);
                 let empty = self.find_next_unoccupied(self.absolute_index(bucket, 0));
                 if empty.is_none() || empty.unwrap() > self.absolute_index(bucket + HOP_RANGE, 0) {
-                    needs_shuffle.push(old_index);
+                    needs_shuffle.push((old_index, hash));
                     continue;
                 }
                 self.populated += 1;
@@ -1755,14 +1437,6 @@ impl<V> HashTable<V> {
                 core::ptr::copy_nonoverlapping(
                     old_buckets.as_ref().get_unchecked(old_index).as_ptr(),
                     self.buckets_ptr()
-                        .as_mut()
-                        .get_unchecked_mut(absolute_empty_idx)
-                        .as_mut_ptr(),
-                    1,
-                );
-                core::ptr::copy_nonoverlapping(
-                    old_hashes.as_ref().get_unchecked(old_index).as_ptr(),
-                    self.hashes_ptr()
                         .as_mut()
                         .get_unchecked_mut(absolute_empty_idx)
                         .as_mut_ptr(),
@@ -1779,13 +1453,9 @@ impl<V> HashTable<V> {
                     .set(n_index);
             }
 
-            for old_index in needs_shuffle {
-                let hash = old_hashes
-                    .as_ref()
-                    .get_unchecked(old_index)
-                    .assume_init_read();
+            for (old_index, hash) in needs_shuffle {
                 let bucket = self.hopmap_index(hash);
-                self.do_vacant_lookup(hash, bucket).insert(
+                self.do_vacant_lookup(hash, bucket, rehash).insert(
                     old_buckets
                         .as_ref()
                         .get_unchecked(old_index)
@@ -1793,9 +1463,10 @@ impl<V> HashTable<V> {
                 );
             }
 
-            for (hash, overflow) in overflows {
+            for overflow in overflows {
+                let hash = rehash(&overflow);
                 let bucket = self.hopmap_index(hash);
-                self.do_vacant_lookup(hash, bucket).insert(overflow);
+                self.do_vacant_lookup(hash, bucket, rehash).insert(overflow);
             }
 
             if old_layout.layout.size() != 0 {
@@ -1811,19 +1482,9 @@ impl<V> HashTable<V> {
     /// algorithm and bucket-based organization, the actual capacity may be
     /// larger than what was initially requested.
     ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// # use hop_hash::hash_table::HashTable;
-    /// #
-    /// let table: HashTable<i32> = HashTable::with_capacity(100);
-    /// println!("Table can hold {} elements", table.capacity());
-    /// assert!(table.capacity() >= 100);
-    /// ```
-    ///
     /// # Load Factor
     ///
-    /// The table maintains a load factor of approximately 98% before
+    /// The table maintains a load factor of approximately 92% before
     /// triggering a resize operation.
     pub fn capacity(&self) -> usize {
         self.max_pop
@@ -1843,20 +1504,23 @@ impl<V> HashTable<V> {
     ///
     /// Returns a vector of length `HOP_RANGE + 1` where indices
     /// `0..HOP_RANGE-1` represent in-table probe lengths, and index
-    /// `HOP_RANGE` represents overflow entries.
+    /// `HOP_RANGE` represents overflow entries, and a second vector of the
+    /// same length representing the total number of distance from the root for
+    /// each bin.
     #[cfg(test)]
-    pub fn probe_histogram(&self) -> alloc::vec::Vec<usize> {
+    pub fn probe_histogram(&self) -> (alloc::vec::Vec<usize>, alloc::vec::Vec<usize>) {
         let mut hist = alloc::vec![0usize; HOP_RANGE + 1];
+        let mut dist_hist = alloc::vec![0usize; HOP_RANGE ];
 
         if self.populated == 0 {
-            return hist;
+            return (hist, dist_hist);
         }
 
         // SAFETY: All pointer/slice accesses obey table bounds; occupied slots
-        // are identified by tags, and corresponding hashes are initialized.
+        // are identified by tags
         unsafe {
             for bucket in self.hopmap_ptr().as_ref().iter() {
-                let mask = bucket.candidates();
+                let mut mask = bucket.candidates();
                 if mask != 0 {
                     hist[mask.count_ones() as usize - 1] += bucket
                         .neighbors
@@ -1864,13 +1528,19 @@ impl<V> HashTable<V> {
                         .copied()
                         .map(|u| u as usize)
                         .sum::<usize>();
+
+                    while mask != 0 {
+                        let n_index = mask.trailing_zeros() as usize;
+                        mask ^= 1 << n_index;
+                        dist_hist[n_index] += 1;
+                    }
                 }
             }
 
             hist[HOP_RANGE] += self.overflow.len();
         }
 
-        hist
+        (hist, dist_hist)
     }
 
     /// Returns detailed performance and utilization statistics for debugging.
@@ -1926,7 +1596,7 @@ impl<V> HashTable<V> {
     /// "OF" row for overflows.
     #[cfg(all(test, feature = "std"))]
     pub fn print_probe_histogram(&self) {
-        let hist = self.probe_histogram();
+        let (hist, dist_hist) = self.probe_histogram();
         let max = *hist.iter().max().unwrap_or(&0);
         if max == 0 {
             println!("probe histogram: empty");
@@ -1970,6 +1640,16 @@ impl<V> HashTable<V> {
         let of_count = hist[HOP_RANGE];
         let of_bar = make_bar(of_count);
         println!("OF | {} ({})", of_bar, of_count);
+
+        let dist_max = *dist_hist.iter().max().unwrap_or(&0);
+        if dist_max > 0 {
+            println!("distance histogram (in-table entries):");
+            for (i, &count) in dist_hist.iter().enumerate() {
+                let label = alloc::format!("{:>2}", i);
+                let bar = make_bar(count);
+                println!("{} | {} ({})", label, bar, count);
+            }
+        }
     }
 }
 
@@ -1980,35 +1660,6 @@ impl<V> HashTable<V> {
 /// It provides efficient APIs for insertion and modification operations.
 ///
 /// [`entry`]: HashTable::entry
-///
-/// # Examples
-///
-/// ```rust
-/// # use core::hash::Hash;
-/// # use core::hash::Hasher;
-/// #
-/// # use hop_hash::hash_table::Entry;
-/// # use hop_hash::hash_table::HashTable;
-/// # use siphasher::sip::SipHasher;
-/// #
-/// # fn hash_str(s: &str) -> u64 {
-/// #     let mut hasher = SipHasher::new();
-/// #     s.hash(&mut hasher);
-/// #     hasher.finish()
-/// # }
-///
-/// let mut table = HashTable::with_capacity(10);
-/// let hash = hash_str("key");
-///
-/// match table.entry(hash, |s: &String| s == "key") {
-///     Entry::Vacant(entry) => {
-///         entry.insert("value".to_string());
-///     }
-///     Entry::Occupied(entry) => {
-///         println!("Key already exists with value: {}", entry.get());
-///     }
-/// }
-/// ```
 pub enum Entry<'a, V> {
     /// A vacant entry - the key is not present in the table
     Vacant(VacantEntry<'a, V>),
@@ -2023,37 +1674,6 @@ impl<'a, V> Entry<'a, V> {
     /// If the entry is occupied, returns a mutable reference to the existing
     /// value. This method provides a convenient way to implement "insert or
     /// get" semantics.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// # use core::hash::Hash;
-    /// # use core::hash::Hasher;
-    /// #
-    /// # use hop_hash::hash_table::HashTable;
-    /// # use siphasher::sip::SipHasher;
-    /// #
-    /// # fn hash_str(s: &str) -> u64 {
-    /// #     let mut hasher = SipHasher::new();
-    /// #     s.hash(&mut hasher);
-    /// #     hasher.finish()
-    /// # }
-    /// #
-    /// let mut table = HashTable::with_capacity(10);
-    /// let hash = hash_str("key");
-    ///
-    /// // Insert if not present
-    /// let value = table
-    ///     .entry(hash, |s: &String| s == "key")
-    ///     .or_insert("key".to_string());
-    /// assert_eq!(value, "key");
-    ///
-    /// // Get existing value
-    /// let existing = table
-    ///     .entry(hash, |s: &String| s == "key")
-    ///     .or_insert("other".to_string());
-    /// assert_eq!(existing, "key");
-    /// ```
     pub fn or_insert(self, default: V) -> &'a mut V {
         match self {
             Entry::Occupied(entry) => entry.into_mut(),
@@ -2072,37 +1692,6 @@ impl<'a, V> Entry<'a, V> {
     ///
     /// * `default` - A closure that returns the value to insert if the entry is
     ///   vacant
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// # use core::hash::Hash;
-    /// # use core::hash::Hasher;
-    /// # use siphasher::sip::SipHasher;
-    /// #
-    /// # use hop_hash::hash_table::HashTable;
-    /// #
-    /// # fn hash_str(s: &str) -> u64 {
-    /// #     let mut hasher = SipHasher::new();
-    /// #     s.hash(&mut hasher);
-    /// #     hasher.finish()
-    /// # }
-    /// #
-    /// let mut table = HashTable::with_capacity(10);
-    /// let hash = hash_str("key");
-    ///
-    /// // Insert with computed value
-    /// let value = table
-    ///     .entry(hash, |s: &String| s == "key")
-    ///     .or_insert_with(|| "key".to_string());
-    /// assert_eq!(value, "key");
-    ///
-    /// // Get existing value (closure is not called)
-    /// let existing = table
-    ///     .entry(hash, |s: &String| s == "key")
-    ///     .or_insert_with(|| panic!("Should not be called"));
-    /// assert_eq!(existing, "key");
-    /// ```
     pub fn or_insert_with(self, default: impl FnOnce() -> V) -> &'a mut V {
         match self {
             Entry::Occupied(entry) => entry.into_mut(),
@@ -2120,43 +1709,6 @@ impl<'a, V> Entry<'a, V> {
     /// # Arguments
     ///
     /// * `f` - A closure that modifies the existing value
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// # use core::hash::Hash;
-    /// # use core::hash::Hasher;
-    /// # use siphasher::sip::SipHasher;
-    /// #
-    /// # use hop_hash::hash_table::HashTable;
-    /// #
-    /// # fn hash_u64(n: u64) -> u64 {
-    /// #     let mut hasher = SipHasher::new();
-    /// #     n.hash(&mut hasher);
-    /// #     hasher.finish()
-    /// # }
-    /// #
-    /// let mut table = HashTable::with_capacity(10);
-    /// let hash = hash_u64(42);
-    ///
-    /// // Entry doesn't exist, so and_modify returns None
-    /// let result = table
-    ///     .entry(hash, |&n: &u64| n == 42)
-    ///     .and_modify(|v| *v += 1);
-    /// assert_eq!(result, None);
-    ///
-    /// // Insert a value
-    /// table.entry(hash, |&n: &u64| n == 42).or_insert(42);
-    ///
-    /// // Now modify the existing value
-    /// let result = table
-    ///     .entry(hash, |&n: &u64| n == 42)
-    ///     .and_modify(|v| *v += 1);
-    /// assert_eq!(result, Some(&mut 43));
-    /// ```
-    ///
-    /// This method is useful for implementing "update if exists" semantics
-    /// without inserting a default value when the key is not present.
     pub fn and_modify(self, f: impl FnOnce(&mut V)) -> Option<&'a mut V> {
         match self {
             Entry::Occupied(entry) => {
@@ -2176,35 +1728,6 @@ impl<'a, V> Entry<'a, V> {
     /// and returns a mutable reference to it.
     ///
     /// This method requires that `V` implements the `Default` trait.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// # use core::hash::Hash;
-    /// # use core::hash::Hasher;
-    /// # use siphasher::sip::SipHasher;
-    /// #
-    /// # use hop_hash::hash_table::HashTable;
-    /// #
-    /// # fn hash_str(s: &str) -> u64 {
-    /// #     let mut hasher = SipHasher::new();
-    /// #     s.hash(&mut hasher);
-    /// #     hasher.finish()
-    /// # }
-    /// #
-    /// let mut table: HashTable<Vec<i32>> = HashTable::with_capacity(10);
-    /// let hash = hash_str("key");
-    ///
-    /// // Insert default value (empty Vec)
-    /// let vec_ref = table.entry(hash, |v: &Vec<i32>| v.is_empty()).or_default();
-    /// vec_ref.push(1);
-    /// vec_ref.push(2);
-    ///
-    /// assert_eq!(
-    ///     table.find(hash, |v: &Vec<i32>| !v.is_empty()),
-    ///     Some(&vec![1, 2])
-    /// );
-    /// ```
     pub fn or_default(self) -> &'a mut V
     where
         V: Default,
@@ -2234,34 +1757,6 @@ impl<'a, V> VacantEntry<'a, V> {
     ///
     /// The value is inserted at the position determined by the hash and
     /// hopscotch algorithm.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// # use core::hash::Hash;
-    /// # use core::hash::Hasher;
-    /// # use siphasher::sip::SipHasher;
-    /// #
-    /// # use hop_hash::hash_table::Entry;
-    /// # use hop_hash::hash_table::HashTable;
-    /// #
-    /// # fn hash_str(s: &str) -> u64 {
-    /// #     let mut hasher = SipHasher::new();
-    /// #     s.hash(&mut hasher);
-    /// #     hasher.finish()
-    /// # }
-    /// #
-    /// let mut table = HashTable::with_capacity(10);
-    /// let hash = hash_str("key");
-    ///
-    /// match table.entry(hash, |s: &String| s == "key") {
-    ///     Entry::Vacant(entry) => {
-    ///         let value_ref = entry.insert("value".to_string());
-    ///         assert_eq!(value_ref, "value");
-    ///     }
-    ///     Entry::Occupied(_) => unreachable!("Entry should be vacant"),
-    /// }
-    /// ```
     pub fn insert(self, value: V) -> &'a mut V {
         self.table.populated += 1;
         if self.is_overflow {
@@ -2284,11 +1779,6 @@ impl<'a, V> VacantEntry<'a, V> {
 
             let target_index = self.hopmap_root * 16 + self.n_index;
             self.table.set_occupied(target_index, hashtag(self.hash));
-            self.table
-                .hashes_ptr()
-                .as_mut()
-                .get_unchecked_mut(target_index)
-                .write(self.hash);
 
             self.table
                 .buckets_ptr()
@@ -2301,8 +1791,8 @@ impl<'a, V> VacantEntry<'a, V> {
     #[cold]
     #[inline(never)]
     fn insert_overflow(self, value: V) -> &'a mut V {
-        self.table.overflow.push((self.hash, value));
-        &mut self.table.overflow.last_mut().unwrap().1
+        self.table.overflow.push(value);
+        self.table.overflow.last_mut().unwrap()
     }
 }
 
@@ -2322,40 +1812,10 @@ pub struct OccupiedEntry<'a, V> {
 
 impl<'a, V> OccupiedEntry<'a, V> {
     /// Gets a reference to the value in the entry.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// # use core::hash::Hash;
-    /// # use core::hash::Hasher;
-    /// # use siphasher::sip::SipHasher;
-    /// #
-    /// # use hop_hash::hash_table::Entry;
-    /// # use hop_hash::hash_table::HashTable;
-    /// #
-    /// # fn hash_str(s: &str) -> u64 {
-    /// #     let mut hasher = SipHasher::new();
-    /// #     s.hash(&mut hasher);
-    /// #     hasher.finish()
-    /// # }
-    /// #
-    /// let mut table = HashTable::with_capacity(10);
-    /// let hash = hash_str("key");
-    /// table
-    ///     .entry(hash, |s: &String| s == "key")
-    ///     .or_insert("key".to_string());
-    ///
-    /// match table.entry(hash, |s: &String| s == "key") {
-    ///     Entry::Occupied(entry) => {
-    ///         assert_eq!(entry.get(), "key");
-    ///     }
-    ///     Entry::Vacant(_) => unreachable!(),
-    /// }
-    /// ```
     pub fn get(&self) -> &V {
         if let Some(overflow_index) = self.overflow_index {
             // SAFETY: overflow_index validated when Some, within overflow vec bounds
-            return unsafe { &self.table.overflow.get_unchecked(overflow_index).1 };
+            return unsafe { self.table.overflow.get_unchecked(overflow_index) };
         }
 
         // SAFETY: absolute_index validated during lookup, bucket confirmed initialized
@@ -2369,40 +1829,10 @@ impl<'a, V> OccupiedEntry<'a, V> {
     }
 
     /// Gets a mutable reference to the value in the entry.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// # use core::hash::Hash;
-    /// # use core::hash::Hasher;
-    /// # use siphasher::sip::SipHasher;
-    /// #
-    /// # use hop_hash::hash_table::Entry;
-    /// # use hop_hash::hash_table::HashTable;
-    /// #
-    /// # fn hash_str(s: &str) -> u64 {
-    /// #     let mut hasher = SipHasher::new();
-    /// #     s.hash(&mut hasher);
-    /// #     hasher.finish()
-    /// # }
-    /// #
-    /// let mut table = HashTable::with_capacity(10);
-    /// let hash = hash_str("key");
-    /// table
-    ///     .entry(hash, |s: &String| s == "key")
-    ///     .or_insert("key".to_string());
-    ///
-    /// match table.entry(hash, |s: &String| s == "key") {
-    ///     Entry::Occupied(mut entry) => {
-    ///         *entry.get_mut() = "modified".to_string();
-    ///     }
-    ///     Entry::Vacant(_) => unreachable!(),
-    /// }
-    /// ```
     pub fn get_mut(&mut self) -> &mut V {
         if let Some(overflow_index) = self.overflow_index {
             // SAFETY: overflow_index validated when Some, within overflow vec bounds
-            return unsafe { &mut self.table.overflow.get_unchecked_mut(overflow_index).1 };
+            return unsafe { self.table.overflow.get_unchecked_mut(overflow_index) };
         }
 
         // SAFETY: absolute_index validated during lookup, bucket confirmed initialized
@@ -2417,39 +1847,10 @@ impl<'a, V> OccupiedEntry<'a, V> {
 
     /// Converts the entry into a mutable reference to the value with the
     /// lifetime of the entry.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// # use core::hash::Hash;
-    /// # use core::hash::Hasher;
-    /// # use siphasher::sip::SipHasher;
-    /// #
-    /// # use hop_hash::hash_table::Entry;
-    /// # use hop_hash::hash_table::HashTable;
-    /// #
-    /// # fn hash_str(s: &str) -> u64 {
-    /// #     let mut hasher = SipHasher::new();
-    /// #     s.hash(&mut hasher);
-    /// #     hasher.finish()
-    /// # }
-    /// #
-    /// let mut table = HashTable::with_capacity(10);
-    /// let hash = hash_str("key");
-    /// table
-    ///     .entry(hash, |s: &String| s == "key")
-    ///     .or_insert("key".to_string());
-    ///
-    /// let value_ref = match table.entry(hash, |s: &String| s == "key") {
-    ///     Entry::Occupied(entry) => entry.into_mut(),
-    ///     Entry::Vacant(_) => unreachable!(),
-    /// };
-    /// *value_ref = "new_value".to_string();
-    /// ```
     pub fn into_mut(self) -> &'a mut V {
         if let Some(overflow_index) = self.overflow_index {
             // SAFETY: overflow_index validated when Some, within overflow vec bounds
-            return unsafe { &mut self.table.overflow.get_unchecked_mut(overflow_index).1 };
+            return unsafe { self.table.overflow.get_unchecked_mut(overflow_index) };
         }
 
         // SAFETY: absolute_index validated during lookup, bucket confirmed initialized
@@ -2463,41 +1864,11 @@ impl<'a, V> OccupiedEntry<'a, V> {
     }
 
     /// Removes the entry from the table and returns the value.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// # use core::hash::Hash;
-    /// # use core::hash::Hasher;
-    /// # use siphasher::sip::SipHasher;
-    /// #
-    /// # use hop_hash::hash_table::Entry;
-    /// # use hop_hash::hash_table::HashTable;
-    /// #
-    /// # fn hash_str(s: &str) -> u64 {
-    /// #     let mut hasher = SipHasher::new();
-    /// #     s.hash(&mut hasher);
-    /// #     hasher.finish()
-    /// # }
-    /// #
-    /// let mut table = HashTable::with_capacity(10);
-    /// let hash = hash_str("key");
-    /// table
-    ///     .entry(hash, |s: &String| s == "key")
-    ///     .or_insert("key".to_string());
-    ///
-    /// let removed_value = match table.entry(hash, |s: &String| s == "key") {
-    ///     Entry::Occupied(entry) => entry.remove(),
-    ///     Entry::Vacant(_) => unreachable!(),
-    /// };
-    /// assert_eq!(removed_value, "key");
-    /// assert!(table.is_empty());
-    /// ```
     pub fn remove(self) -> V {
         self.table.populated -= 1;
 
         if let Some(overflow_index) = self.overflow_index {
-            let (_, value) = self.table.overflow.swap_remove(overflow_index);
+            let value = self.table.overflow.swap_remove(overflow_index);
             return value;
         }
 
@@ -2533,34 +1904,6 @@ impl<'a, V> OccupiedEntry<'a, V> {
 /// It yields `&V` references in an arbitrary order.
 ///
 /// [`iter`]: HashTable::iter
-///
-/// # Examples
-///
-/// ```rust
-/// # use core::hash::Hash;
-/// # use core::hash::Hasher;
-/// #
-/// # use hop_hash::hash_table::HashTable;
-/// # use siphasher::sip::SipHasher;
-/// #
-/// # fn hash_str(s: &str) -> u64 {
-/// #     let mut hasher = SipHasher::new();
-/// #     s.hash(&mut hasher);
-/// #     hasher.finish()
-/// # }
-/// #
-/// let mut table = HashTable::with_capacity(10);
-/// table
-///     .entry(hash_str("a"), |s: &String| s == "a")
-///     .or_insert("1".to_string());
-/// table
-///     .entry(hash_str("b"), |s: &String| s == "b")
-///     .or_insert("2".to_string());
-///
-/// for value in table.iter() {
-///     println!("Value: {}", value);
-/// }
-/// ```
 pub struct Iter<'a, V> {
     table: &'a HashTable<V>,
     bucket_index: usize,
@@ -2594,7 +1937,7 @@ impl<'a, V> Iterator for Iter<'a, V> {
             }
 
             if self.overflow_index < self.table.overflow.len() {
-                let item = &self.table.overflow[self.overflow_index].1;
+                let item = &self.table.overflow[self.overflow_index];
                 self.overflow_index += 1;
                 return Some(item);
             }
@@ -2610,34 +1953,6 @@ impl<'a, V> Iterator for Iter<'a, V> {
 /// It yields owned `V` values and empties the table as it iterates.
 ///
 /// [`drain`]: HashTable::drain
-///
-/// # Examples
-///
-/// ```rust
-/// # use core::hash::Hash;
-/// # use core::hash::Hasher;
-/// #
-/// # use hop_hash::hash_table::HashTable;
-/// # use siphasher::sip::SipHasher;
-/// #
-/// # fn hash_str(s: &str) -> u64 {
-/// #     let mut hasher = SipHasher::new();
-/// #     s.hash(&mut hasher);
-/// #     hasher.finish()
-/// # }
-/// #
-/// let mut table = HashTable::with_capacity(10);
-/// table
-///     .entry(hash_str("a"), |s: &String| s == "a")
-///     .or_insert("1".to_string());
-/// table
-///     .entry(hash_str("b"), |s: &String| s == "b")
-///     .or_insert("2".to_string());
-///
-/// let values: Vec<String> = table.drain().collect();
-/// assert!(table.is_empty());
-/// assert_eq!(values.len(), 2);
-/// ```
 pub struct Drain<'a, V> {
     table: &'a mut HashTable<V>,
     bucket_index: usize,
@@ -2675,21 +1990,7 @@ impl<'a, V> Iterator for Drain<'a, V> {
             while self.bucket_index < total_slots {
                 if self.table.is_occupied(self.bucket_index) {
                     self.table.populated -= 1;
-                    let hash = self
-                        .table
-                        .hashes_ptr()
-                        .as_ref()
-                        .get_unchecked(self.bucket_index)
-                        .assume_init_read();
 
-                    let root = hash as usize & self.table.max_root_mask;
-                    let off = self.bucket_index - root * 16;
-
-                    // SAFETY: An element is always stored within the hop-neighborhood of its
-                    // root bucket. This invariant is enforced on insertion. Therefore, `off`
-                    // is guaranteed to be less than `HOP_RANGE * 16`, making `off / 16` a
-                    // valid neighbor index (less than HOP_RANGE).
-                    debug_assert!(off < HOP_RANGE * 16);
                     self.table.clear_occupied(self.bucket_index);
                     let bucket = self
                         .table
@@ -2705,7 +2006,7 @@ impl<'a, V> Iterator for Drain<'a, V> {
 
             if !self.table.overflow.is_empty() {
                 self.table.populated -= 1;
-                let (_, value) = self.table.overflow.pop().unwrap();
+                let value = self.table.overflow.pop().unwrap();
                 return Some(value);
             }
 
@@ -2764,7 +2065,7 @@ mod tests {
         let mut table: HashTable<Item> = HashTable::with_capacity(0);
         for k in 0..32u64 {
             let hash = hash_key(&state, k);
-            match table.entry(hash, |v: &Item| v.key == k) {
+            match table.entry(hash, |v: &Item| v.key == k, |v| hash_key(&state, v.key)) {
                 Entry::Vacant(v) => {
                     v.insert(Item {
                         key: k,
@@ -2808,14 +2109,14 @@ mod tests {
         let k = 42u64;
         let hash = hash_key(&state, k);
 
-        match table.entry(hash, |v| v.key == k) {
+        match table.entry(hash, |v| v.key == k, |v| hash_key(&state, v.key)) {
             Entry::Vacant(v) => {
                 v.insert(Item { key: k, value: 7 });
             }
             Entry::Occupied(_) => panic!("should be vacant first time"),
         }
 
-        match table.entry(hash, |v| v.key == k) {
+        match table.entry(hash, |v| v.key == k, |v| hash_key(&state, v.key)) {
             Entry::Occupied(mut occ) => {
                 let prev_value = occ.get().value;
                 *occ.get_mut() = Item { key: k, value: 11 };
@@ -2833,7 +2134,7 @@ mod tests {
         let mut table: HashTable<Item> = HashTable::with_capacity(0);
         for k in 0..5u64 {
             let hash = hash_key(&state, k);
-            match table.entry(hash, |v| v.key == k) {
+            match table.entry(hash, |v| v.key == k, |v| hash_key(&state, v.key)) {
                 Entry::Vacant(v) => {
                     v.insert(Item { key: k, value: 1 });
                 }
@@ -2860,7 +2161,7 @@ mod tests {
         let mut table: HashTable<Item> = HashTable::with_capacity(0);
         for k in 0..8u64 {
             let hash = hash_key(&state, k);
-            match table.entry(hash, |v| v.key == k) {
+            match table.entry(hash, |v| v.key == k, |v| hash_key(&state, v.key)) {
                 Entry::Vacant(v) => {
                     v.insert(Item {
                         key: k,
@@ -2889,7 +2190,7 @@ mod tests {
         let mut table: HashTable<Item> = HashTable::with_capacity(0);
         for k in 0..100000u64 {
             let hash = hash_key(&state, k);
-            match table.entry(hash, |v| v.key == k) {
+            match table.entry(hash, |v| v.key == k, |v| hash_key(&state, v.key)) {
                 Entry::Vacant(v) => {
                     v.insert(Item {
                         key: k,
@@ -2929,7 +2230,7 @@ mod tests {
         let mut table: HashTable<Item> = HashTable::with_capacity(0);
         let hash = 0;
         for k in 0..65u64 {
-            match table.entry(hash, |v| v.key == k) {
+            match table.entry(hash, |v| v.key == k, |_| 0) {
                 Entry::Vacant(v) => {
                     v.insert(Item {
                         key: k,
@@ -2960,7 +2261,7 @@ mod tests {
         let mut table: HashTable<Item> = HashTable::with_capacity(0);
         for k in 10..20u64 {
             let hash = hash_key(&state, k);
-            match table.entry(hash, |v| v.key == k) {
+            match table.entry(hash, |v| v.key == k, |v| hash_key(&state, v.key)) {
                 Entry::Vacant(v) => {
                     v.insert(Item {
                         key: k,
@@ -3006,7 +2307,11 @@ mod tests {
 
         for (i, k) in keys.iter().enumerate() {
             let hash = hash_string_key(&state, k);
-            match table.entry(hash, |v: &StringItem| v.key == *k) {
+            match table.entry(
+                hash,
+                |v: &StringItem| v.key == *k,
+                |v| hash_string_key(&state, &v.key),
+            ) {
                 Entry::Vacant(v) => {
                     v.insert(StringItem {
                         key: k.to_string(),
@@ -3041,7 +2346,7 @@ mod tests {
         let keys = ["a", "b", "c", "d", "e"];
         for (i, k) in keys.iter().enumerate() {
             let hash = hash_string_key(&state, k);
-            match table.entry(hash, |v| v.key == *k) {
+            match table.entry(hash, |v| v.key == *k, |v| hash_string_key(&state, &v.key)) {
                 Entry::Vacant(v) => {
                     v.insert(StringItem {
                         key: k.to_string(),
@@ -3072,10 +2377,12 @@ mod tests {
         let keys = ["a", "b", "c"];
         for (i, k) in keys.iter().enumerate() {
             let hash = hash_string_key(&state, k);
-            table.entry(hash, |v| v.key == *k).or_insert(StringItem {
-                key: k.to_string(),
-                value: i as i32,
-            });
+            table
+                .entry(hash, |v| v.key == *k, |v| hash_string_key(&state, &v.key))
+                .or_insert(StringItem {
+                    key: k.to_string(),
+                    value: i as i32,
+                });
         }
 
         let mut found_keys = table
@@ -3093,10 +2400,12 @@ mod tests {
         let keys = ["a", "b", "c"];
         for (i, k) in keys.iter().enumerate() {
             let hash = hash_string_key(&state, k);
-            table.entry(hash, |v| v.key == *k).or_insert(StringItem {
-                key: k.to_string(),
-                value: i as i32,
-            });
+            table
+                .entry(hash, |v| v.key == *k, |v| hash_string_key(&state, &v.key))
+                .or_insert(StringItem {
+                    key: k.to_string(),
+                    value: i as i32,
+                });
         }
 
         let drained_items: Vec<String> = table.drain().map(|item| item.key).collect();
@@ -3115,7 +2424,7 @@ mod tests {
         let hash = hash_string_key(&state, key);
 
         let value_ref = table
-            .entry(hash, |v| v.key == key)
+            .entry(hash, |v| v.key == key, |v| hash_string_key(&state, &v.key))
             .or_insert_with(|| StringItem {
                 key: key.to_string(),
                 value: 42,
@@ -3123,7 +2432,7 @@ mod tests {
         assert_eq!(value_ref.value, 42);
 
         let existing_ref = table
-            .entry(hash, |v| v.key == key)
+            .entry(hash, |v| v.key == key, |v| hash_string_key(&state, &v.key))
             .or_insert_with(|| StringItem {
                 key: key.to_string(),
                 value: 100,
@@ -3139,10 +2448,18 @@ mod tests {
         let mut table = HashTable::with_capacity(10);
         let hash = hash_string_key(&state, "key");
         table
-            .entry(hash, |s: &String| s == "key")
+            .entry(
+                hash,
+                |s: &String| s == "key",
+                |v| hash_string_key(&state, v),
+            )
             .or_insert("key".to_string());
 
-        let value_ref = match table.entry(hash, |s: &String| s == "key") {
+        let value_ref = match table.entry(
+            hash,
+            |s: &String| s == "key",
+            |v| hash_string_key(&state, v),
+        ) {
             Entry::Occupied(entry) => entry.into_mut(),
             Entry::Vacant(_) => unreachable!("Entry should be occupied: {:#?}", table),
         };
@@ -3154,11 +2471,10 @@ mod tests {
     #[cfg(feature = "std")]
     fn histogram_output() {
         let state = HashState::default();
-        let cap = ((1 << 19) as f32 * 0.87) as usize;
-        let mut table: HashTable<Item> = HashTable::with_capacity(cap);
-        for k in 0..cap as u64 {
+        let mut table: HashTable<Item> = HashTable::with_capacity(1 << 19);
+        for k in 0..table.capacity() as u64 {
             let hash = hash_key(&state, k);
-            match table.entry(hash, |v| v.key == k) {
+            match table.entry(hash, |v| v.key == k, |v| hash_key(&state, v.key)) {
                 Entry::Vacant(v) => {
                     v.insert(Item {
                         key: k,
@@ -3169,6 +2485,25 @@ mod tests {
             }
         }
 
+        println!("Full table stats:");
+        table.print_probe_histogram();
+        table.debug_stats().print();
+
+        table.clear();
+        for k in 0..(table.capacity() / 2) as u64 {
+            let hash = hash_key(&state, k);
+            match table.entry(hash, |v| v.key == k, |v| hash_key(&state, v.key)) {
+                Entry::Vacant(v) => {
+                    v.insert(Item {
+                        key: k,
+                        value: k as i32,
+                    });
+                }
+                _ => unreachable!(),
+            }
+        }
+
+        println!("\nHalf-full table stats:");
         table.print_probe_histogram();
         table.debug_stats().print();
     }
@@ -3189,7 +2524,7 @@ mod tests {
         for (key, value) in test_data.iter() {
             let hash = hash_string_key(&state, key);
             original
-                .entry(hash, |v| v.key == *key)
+                .entry(hash, |v| v.key == *key, |v| hash_string_key(&state, &v.key))
                 .or_insert(StringItem {
                     key: key.to_string(),
                     value: *value,
@@ -3243,7 +2578,7 @@ mod tests {
 
         let num_items = 200u64;
         for k in 0..num_items {
-            match table.entry(hash, |v| v.key == k) {
+            match table.entry(hash, |v| v.key == k, |_| 0) {
                 Entry::Vacant(v) => {
                     v.insert(Item {
                         key: k,
@@ -3288,7 +2623,7 @@ mod tests {
         assert!(initial_capacity > 0);
         assert_eq!(table.len(), 0);
 
-        table.shrink_to_fit();
+        table.shrink_to_fit(|_| panic!("should not be called"));
 
         assert_eq!(table.len(), 0);
         assert_eq!(table.capacity(), 0);
@@ -3301,17 +2636,19 @@ mod tests {
 
         for i in 0..50 {
             let hash = hash_key(&state, i);
-            table.entry(hash, |v| v.key == i).or_insert(Item {
-                key: i,
-                value: i as i32,
-            });
+            table
+                .entry(hash, |v| v.key == i, |v| hash_key(&state, v.key))
+                .or_insert(Item {
+                    key: i,
+                    value: i as i32,
+                });
         }
 
         let initial_capacity = table.capacity();
         assert_eq!(table.len(), 50);
         assert!(initial_capacity >= 1000);
 
-        table.shrink_to_fit();
+        table.shrink_to_fit(|k| hash_key(&state, k.key));
 
         assert_eq!(table.len(), 50);
         assert!(table.capacity() < initial_capacity);
@@ -3332,10 +2669,12 @@ mod tests {
 
         for i in 0..100 {
             let hash = hash_key(&state, i);
-            table.entry(hash, |v| v.key == i).or_insert(Item {
-                key: i,
-                value: i as i32,
-            });
+            table
+                .entry(hash, |v| v.key == i, |v| hash_key(&state, v.key))
+                .or_insert(Item {
+                    key: i,
+                    value: i as i32,
+                });
         }
 
         assert_eq!(table.len(), 100);
@@ -3345,7 +2684,7 @@ mod tests {
         assert_eq!(table.len(), 0);
         assert_eq!(table.capacity(), capacity_with_items);
 
-        table.shrink_to_fit();
+        table.shrink_to_fit(|k| hash_key(&state, k.key));
 
         assert_eq!(table.len(), 0);
         assert_eq!(table.capacity(), 0);
@@ -3358,10 +2697,12 @@ mod tests {
 
         for i in 0..200 {
             let hash = hash_key(&state, i);
-            table.entry(hash, |v| v.key == i).or_insert(Item {
-                key: i,
-                value: i as i32,
-            });
+            table
+                .entry(hash, |v| v.key == i, |v| hash_key(&state, v.key))
+                .or_insert(Item {
+                    key: i,
+                    value: i as i32,
+                });
         }
 
         assert_eq!(table.len(), 200);
@@ -3375,7 +2716,7 @@ mod tests {
         assert_eq!(table.len(), 10);
         assert_eq!(table.capacity(), initial_capacity);
 
-        table.shrink_to_fit();
+        table.shrink_to_fit(|k| hash_key(&state, k.key));
 
         assert_eq!(table.len(), 10);
         assert!(table.capacity() < initial_capacity);
@@ -3406,7 +2747,7 @@ mod tests {
 
         for item in &items_with_same_hash {
             table
-                .entry(base_hash, |v| v.key == item.key)
+                .entry(base_hash, |v| v.key == item.key, |_| base_hash)
                 .or_insert(item.clone());
         }
 
@@ -3419,7 +2760,7 @@ mod tests {
 
         assert_eq!(table.len(), 10);
 
-        table.shrink_to_fit();
+        table.shrink_to_fit(|_| base_hash);
 
         assert_eq!(table.len(), 10);
         assert!(table.capacity() <= initial_capacity);
@@ -3439,18 +2780,20 @@ mod tests {
         // Add items gradually and call shrink_to_fit to get to optimal size
         for i in 0..50 {
             let hash = hash_key(&state, i);
-            table.entry(hash, |v| v.key == i).or_insert(Item {
-                key: i,
-                value: i as i32,
-            });
+            table
+                .entry(hash, |v| v.key == i, |v| hash_key(&state, v.key))
+                .or_insert(Item {
+                    key: i,
+                    value: i as i32,
+                });
         }
 
         // First shrink to get to optimal size
-        table.shrink_to_fit();
+        table.shrink_to_fit(|k| hash_key(&state, k.key));
         let optimal_capacity = table.capacity();
 
         // Now shrink_to_fit should not change the capacity
-        table.shrink_to_fit();
+        table.shrink_to_fit(|k| hash_key(&state, k.key));
         let capacity_after_second_shrink = table.capacity();
 
         assert_eq!(table.len(), 50);
@@ -3472,19 +2815,23 @@ mod tests {
 
         for i in 0..100 {
             let hash = hash_key(&state, i);
-            table.entry(hash, |v| v.key == i).or_insert(Item {
-                key: i,
-                value: i as i32,
-            });
+            table
+                .entry(hash, |v| v.key == i, |v| hash_key(&state, v.key))
+                .or_insert(Item {
+                    key: i,
+                    value: i as i32,
+                });
         }
 
-        table.shrink_to_fit();
+        table.shrink_to_fit(|k| hash_key(&state, k.key));
 
         let new_hash = hash_key(&state, 999);
-        table.entry(new_hash, |v| v.key == 999).or_insert(Item {
-            key: 999,
-            value: 999,
-        });
+        table
+            .entry(new_hash, |v| v.key == 999, |v| hash_key(&state, v.key))
+            .or_insert(Item {
+                key: 999,
+                value: 999,
+            });
 
         assert_eq!(table.len(), 101);
 

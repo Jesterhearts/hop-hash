@@ -15,8 +15,7 @@ use crate::hash_table::HashTable;
 ///
 /// # Performance Characteristics
 ///
-/// - **Memory**: 2 bytes per entry overhead, plus the size of `(K, V)` plus a
-///   u64 for the hash
+/// - **Memory**: 2 bytes per entry overhead, plus the size of `(K, V)`.
 #[derive(Clone)]
 pub struct HashMap<K, V, S> {
     table: HashTable<(K, V)>,
@@ -258,12 +257,14 @@ where
     /// assert_eq!(map.len(), 2);
     /// ```
     pub fn shrink_to_fit(&mut self) {
-        self.table.shrink_to_fit();
+        self.table
+            .shrink_to_fit(|k| self.hash_builder.hash_one(&k.0));
     }
 
     /// Reserves capacity for at least `additional` more elements.
     pub fn reserve(&mut self, additional: usize) {
-        self.table.reserve(additional);
+        self.table
+            .reserve(additional, |k| self.hash_builder.hash_one(&k.0));
     }
 
     /// Inserts a key-value pair into the map.
@@ -296,7 +297,11 @@ where
     /// ```
     pub fn insert(&mut self, key: K, value: V) -> Option<V> {
         let hash = self.hash_builder.hash_one(&key);
-        match self.table.entry(hash, |(k, _)| k == &key) {
+        match self.table.entry(
+            hash,
+            |(k, _)| k == &key,
+            |kv| self.hash_builder.hash_one(&kv.0),
+        ) {
             TableEntry::Occupied(mut entry) => {
                 let old_value = core::mem::replace(&mut entry.get_mut().1, value);
                 Some(old_value)
@@ -486,7 +491,11 @@ where
     /// ```
     pub fn entry(&mut self, key: K) -> Entry<'_, K, V> {
         let hash = self.hash_builder.hash_one(&key);
-        match self.table.entry(hash, |(k, _)| k == &key) {
+        match self.table.entry(
+            hash,
+            |(k, _)| k == &key,
+            |kv| self.hash_builder.hash_one(&kv.0),
+        ) {
             TableEntry::Occupied(entry) => Entry::Occupied(OccupiedEntry { entry }),
             TableEntry::Vacant(entry) => Entry::Vacant(VacantEntry { entry, key }),
         }

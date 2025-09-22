@@ -67,7 +67,7 @@ fn bench_insert_sequential(c: &mut Criterion) {
             b.iter(|| {
                 let mut table = HopHashTable::<TestItem>::with_capacity(0);
                 for (hash, item) in hash_and_item.iter().cloned() {
-                    match table.entry(hash, |v| v.key == item.key) {
+                    match table.entry(hash, |v| v.key == item.key, |v| hash_key(&v.key)) {
                         hop_hash::hash_table::Entry::Vacant(entry) => {
                             black_box(entry.insert(item));
                         }
@@ -84,7 +84,7 @@ fn bench_insert_sequential(c: &mut Criterion) {
                 b.iter(|| {
                     let mut table = HopHashTable::<TestItem>::with_capacity(size);
                     for (hash, item) in hash_and_item.iter().cloned() {
-                        match table.entry(hash, |v| v.key == item.key) {
+                        match table.entry(hash, |v| v.key == item.key, |v| hash_key(&v.key)) {
                             hop_hash::hash_table::Entry::Vacant(entry) => {
                                 black_box(entry.insert(item));
                             }
@@ -156,7 +156,7 @@ fn bench_insert_random(c: &mut Criterion) {
             b.iter(|| {
                 let mut table = HopHashTable::<TestItem>::with_capacity(0);
                 for (hash, item) in hash_and_item.iter().cloned() {
-                    match table.entry(hash, |v| v.key == item.key) {
+                    match table.entry(hash, |v| v.key == item.key, |v| hash_key(&v.key)) {
                         hop_hash::hash_table::Entry::Vacant(entry) => {
                             black_box(entry.insert(item));
                         }
@@ -206,7 +206,7 @@ fn bench_find_sequential(c: &mut Criterion) {
         let mut hashbrown_table = HashbrownHashTable::<TestItem>::with_capacity(*size);
 
         for (hash, item) in hash_and_item.iter().take(hop_capacity).cloned() {
-            match hop_table.entry(hash, |v| v.key == item.key) {
+            match hop_table.entry(hash, |v| v.key == item.key, |v| hash_key(&v.key)) {
                 hop_hash::hash_table::Entry::Vacant(entry) => {
                     entry.insert(item.clone());
                 }
@@ -254,7 +254,7 @@ fn bench_find_hit_miss(c: &mut Criterion) {
         let hop_capacity = HopHashTable::<TestItem>::with_capacity(*size).capacity();
         let hashbrown_capacity = HashbrownHashTable::<TestItem>::with_capacity(*size).capacity();
 
-        let hash_and_item = (0..hop_capacity.max(hashbrown_capacity))
+        let hash_and_item = (0..hop_capacity.max(hashbrown_capacity) * 2)
             .step_by(2)
             .map(|i| {
                 let key = i as u64;
@@ -264,7 +264,7 @@ fn bench_find_hit_miss(c: &mut Criterion) {
             })
             .collect::<Vec<(u64, TestItem)>>();
 
-        let misses_hash_and_key = (1..hop_capacity.max(hashbrown_capacity))
+        let misses_hash_and_key = (1..hop_capacity.max(hashbrown_capacity) * 2)
             .step_by(2)
             .map(|i| {
                 let key = i as u64;
@@ -274,11 +274,11 @@ fn bench_find_hit_miss(c: &mut Criterion) {
             })
             .collect::<Vec<(u64, String)>>();
 
-        let mut hop_table = HopHashTable::<TestItem>::with_capacity(0);
-        let mut hashbrown_table = HashbrownHashTable::<TestItem>::with_capacity(0);
+        let mut hop_table = HopHashTable::<TestItem>::with_capacity(*size);
+        let mut hashbrown_table = HashbrownHashTable::<TestItem>::with_capacity(*size);
 
-        for (hash, item) in hash_and_item.iter().take(hop_capacity / 2).cloned() {
-            match hop_table.entry(hash, |v| v.key == item.key) {
+        for (hash, item) in hash_and_item.iter().take(hop_capacity).cloned() {
+            match hop_table.entry(hash, |v| v.key == item.key, |v| hash_key(&v.key)) {
                 hop_hash::hash_table::Entry::Vacant(entry) => {
                     entry.insert(item.clone());
                 }
@@ -286,7 +286,7 @@ fn bench_find_hit_miss(c: &mut Criterion) {
             }
         }
 
-        for (hash, item) in hash_and_item.iter().take(hashbrown_capacity / 2).cloned() {
+        for (hash, item) in hash_and_item.iter().take(hashbrown_capacity).cloned() {
             match hashbrown_table.entry(hash, |v| v.key == item.key, |v| hash_key(&v.key)) {
                 HashbrownEntry::Vacant(entry) => {
                     entry.insert(item);
@@ -295,10 +295,10 @@ fn bench_find_hit_miss(c: &mut Criterion) {
             }
         }
 
-        group.throughput(Throughput::Elements((hop_capacity / 2) as u64));
+        group.throughput(Throughput::Elements((hop_capacity) as u64));
         group.bench_function(format!("hop_hash/hits/{}", size), |b| {
             b.iter(|| {
-                for (hash, item) in hash_and_item.iter().take(hop_capacity / 2) {
+                for (hash, item) in hash_and_item.iter().take(hop_capacity) {
                     let result = hop_table.find(*hash, |v| v.key == item.key);
                     black_box(result);
                 }
@@ -314,10 +314,10 @@ fn bench_find_hit_miss(c: &mut Criterion) {
             })
         });
 
-        group.throughput(Throughput::Elements((hashbrown_capacity / 2) as u64));
+        group.throughput(Throughput::Elements((hashbrown_capacity) as u64));
         group.bench_function(format!("hashbrown/hits/{}", size), |b| {
             b.iter(|| {
-                for (hash, item) in hash_and_item.iter().take(hashbrown_capacity / 2) {
+                for (hash, item) in hash_and_item.iter().take(hashbrown_capacity) {
                     let result = hashbrown_table.find(*hash, |v| v.key == item.key);
                     black_box(result);
                 }
@@ -326,7 +326,7 @@ fn bench_find_hit_miss(c: &mut Criterion) {
 
         group.bench_function(format!("hashbrown/misses/{}", size), |b| {
             b.iter(|| {
-                for (hash, key) in misses_hash_and_key.iter().take(hashbrown_capacity / 2) {
+                for (hash, key) in misses_hash_and_key.iter().take(hashbrown_capacity) {
                     let result = hashbrown_table.find(*hash, |v| v.key == *key);
                     black_box(result);
                 }
@@ -355,7 +355,7 @@ fn bench_remove(c: &mut Criterion) {
                 || {
                     let mut table = HopHashTable::<TestItem>::with_capacity(0);
                     for (hash, item) in hash_and_item.iter().cloned() {
-                        match table.entry(hash, |v| v.key == item.key) {
+                        match table.entry(hash, |v| v.key == item.key, |v| hash_key(&v.key)) {
                             hop_hash::hash_table::Entry::Vacant(entry) => {
                                 entry.insert(item);
                             }
@@ -424,7 +424,7 @@ fn bench_iteration(c: &mut Criterion) {
         let mut hashbrown_table = HashbrownHashTable::<TestItem>::with_capacity(0);
 
         for (hash, item) in hash_and_item.iter().cloned() {
-            match hop_table.entry(hash, |v| v.key == item.key) {
+            match hop_table.entry(hash, |v| v.key == item.key, |v| hash_key(&v.key)) {
                 hop_hash::hash_table::Entry::Vacant(entry) => {
                     entry.insert(item.clone());
                 }
@@ -483,7 +483,7 @@ fn bench_drain(c: &mut Criterion) {
                 || {
                     let mut table = HopHashTable::<TestItem>::with_capacity(0);
                     for (hash, item) in hash_and_item.iter().cloned() {
-                        match table.entry(hash, |v| v.key == item.key) {
+                        match table.entry(hash, |v| v.key == item.key, |v| hash_key(&v.key)) {
                             hop_hash::hash_table::Entry::Vacant(entry) => {
                                 entry.insert(item);
                             }
@@ -571,7 +571,7 @@ fn bench_mixed_workload(c: &mut Criterion) {
                 let mut table = HopHashTable::<TestItem>::with_capacity(0);
 
                 for (hash, item) in initial_hash_and_item.iter().cloned() {
-                    match table.entry(hash, |v| v.key == item.key) {
+                    match table.entry(hash, |v| v.key == item.key, |v| hash_key(&v.key)) {
                         hop_hash::hash_table::Entry::Vacant(entry) => {
                             entry.insert(item);
                         }
@@ -590,7 +590,7 @@ fn bench_mixed_workload(c: &mut Criterion) {
                 }
 
                 for (hash, item) in final_hash_and_item.iter().cloned() {
-                    match table.entry(hash, |v| v.key == item.key) {
+                    match table.entry(hash, |v| v.key == item.key, |v| hash_key(&v.key)) {
                         hop_hash::hash_table::Entry::Vacant(entry) => {
                             entry.insert(item);
                         }

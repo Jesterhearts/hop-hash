@@ -42,7 +42,7 @@ pub mod hash_map;
 ///
 /// ## Performance Characteristics
 ///
-/// - **Memory overhead**: 2 bytes per slot plus hash storage
+/// - **Memory overhead**: 2 bytes per slot.
 ///
 /// ## When to Use
 ///
