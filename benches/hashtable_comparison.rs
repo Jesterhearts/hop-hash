@@ -33,14 +33,7 @@ impl TestItem {
 
 const SIZES: &[usize] = &[
     ((1 << 10) as f32 * 0.87) as usize,
-    ((1 << 11) as f32 * 0.87) as usize,
-    ((1 << 12) as f32 * 0.87) as usize,
-    ((1 << 13) as f32 * 0.87) as usize,
-    ((1 << 14) as f32 * 0.87) as usize,
     ((1 << 15) as f32 * 0.87) as usize,
-    ((1 << 16) as f32 * 0.87) as usize,
-    ((1 << 17) as f32 * 0.87) as usize,
-    ((1 << 18) as f32 * 0.87) as usize,
     ((1 << 19) as f32 * 0.87) as usize,
 ];
 
