@@ -1532,7 +1532,7 @@ impl<V> HashTable<V> {
                     while mask != 0 {
                         let n_index = mask.trailing_zeros() as usize;
                         mask ^= 1 << n_index;
-                        dist_hist[n_index] += 1;
+                        dist_hist[n_index] += bucket.neighbors[n_index] as usize;
                     }
                 }
             }
