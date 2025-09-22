@@ -1632,7 +1632,7 @@ impl<V> HashTable<V> {
         };
 
         for (i, &count) in hist.iter().take(HOP_RANGE).enumerate() {
-            let label = alloc::format!("{:>2}", i);
+            let label = alloc::format!("{:>2}", i + 1);
             let bar = make_bar(count);
             println!("{} | {} ({})", label, bar, count);
         }
