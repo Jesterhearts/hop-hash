@@ -21,8 +21,8 @@ A high-performance hash table implementation in Rust, utilizing a 16-way hopscot
 - **16-Way Hopscotch Hashing**: Each entry is stored within a "neighborhood" of 16 slots from its
   initial bucket. This ensures that probe sequences are short and bounded.
 - **16-Entry Buckets**: The table is organized into 16-entry buckets, a structure amenable to SIMD
-  optimizations. Each bucket is 16-byte aligned, and entries are associated with an 8-bit tag
-  (derived from the hash) for fast filtering during lookups, minimizing expensive key comparisons.
+  optimizations. Entries are associated with a 7-bit tag (derived from the hash, inspired by SwissTable/Hashbrown) for fast filtering
+  during lookups, minimizing expensive key comparisons.
 - **SIMD-Accelerated Lookups**: On `x86_64` architectures with SSE2 support, the implementation uses
   SIMD instructions to compare 16 tags in parallel. This allows for the rapid elimination of
   non-matching entries. A scalar fallback is provided for non-SIMD platforms.
