@@ -2,7 +2,7 @@
 ## Key Takeaways
 - Hop-hash performs well vs Hashbrown for mixed workloads at high load factors (92%+).
 - Hop-hash significantly underperforms Hashbrown for single-operation workloads (get-only or insert-only).
-- Iteration performance is significantly better than Hashbrown.
+- Iteration performance is better than Hashbrown.
 
 ## Individual Results
 
@@ -17,9 +17,23 @@ In all cases, Hashbrown is represented with the red line, and Hop-hash is repres
 - SipHash hasher
 - Value-type is a String of length 20, generated randomly + a u64. The String is used as the key for
   hashing and comparisons.
+  - The benchmark suite does include large/small value types, but these are not shown here for
+    brevity. In general, the _relative_ performance of Hop-hash decreases for small value types, and
+    increases for large value types.
 
 
 ### Mixed Workloads
+#### Collect/Find
+The following benchmark results show the performance of hop-hash vs hashbrown for a mixed workload
+which:
+- Inserts up to the target capacity & load factor, so the table is full
+- Looks up all of the original elements (all hits)
+
+This is an extremely common workload for hash tables, and hashbrown definitely has the advantage here.
+
+![mixed workload benchmark results](images/collect_find.png)
+![mixed workload benchmark results](images/collect_find_preallocated.png)
+
 #### Insert/Remove/Get/Insert Mix
 The following benchmark results show the performance of hop-hash vs hashbrown for a mixed workload
 which:
@@ -28,21 +42,21 @@ which:
 - Looks up all of the original elements (half will be misses)
 - Inserts up to the target capacity and load factor again
 
-![mixed workload benchmark results](images/mixed_workload.png)
+![mixed workload benchmark results](images/mixed_batch.png)
 
 #### Find/Insert/Remove Mix (50/25/25)
 The following benchmark results show the performance of hop-hash vs hashbrown for a mixed workload
 which randomizes between find, insert, and remove operations in a 50/25/25 ratio.
 
-![mixed workload benchmark results](images/mixed_probablistic.png)
+![mixed workload benchmark results](images/mixed_probabilistic.png)
 
 #### Find/Insert/Remove Mix Zipf 1.0/1.3
 The following benchmark results show the performance of hop-hash vs hashbrown for a mixed workload
 which randomizes between find, insert, and remove operations using a zipf distribution with s=1.0
 and s=1.3.
 
-![mixed workload benchmark results](images/mixed_probabilistic_zipf_1.0.png)
-![mixed workload benchmark results](images/mixed_probabilistic_zipf_1.3.png)
+![mixed workload benchmark results](images/mixed_zipf_1.0.png)
+![mixed workload benchmark results](images/mixed_zipf_1.3.png)
 
 #### Churn
 This benchmark simulates a workload where the table is kept at a steady state, with random inserts
@@ -54,49 +68,13 @@ it is removed.
 
 ### Single Operation Workloads
 #### Iteration
-The following benchmark results show the performance of hop-hash vs hashbrown for iterating over all
-elements of a table filled to the target load factor.
+The following benchmark results show the performance of hop-hash vs hashbrown for iterating over
+all items in the table.
 
 ![iteration benchmark results](images/iteration.png)
 
 #### Drain
 The following benchmark results show the performance of hop-hash vs hashbrown for draining all
-elements of a table filled to the target load factor.
+items from the table.
 
 ![drain benchmark results](images/drain.png)
-
-#### Get-Only (100% Find)
-The following benchmark results show the performance of hop-hash vs hashbrown for a get-only workload
-for a table filled to the target load factor with a 100% success rate.
-
-![get-only benchmark results](images/find_hit.png)
-
-#### Get-Only (50% Find)
-The following benchmark results show the performance of hop-hash vs hashbrown for a get-only workload
-for a table filled to the target load factor with a 50% success rate.
-
-![get-only benchmark results](images/find_hit_miss.png)
-
-#### Get-Only (0% Find)
-The following benchmark results show the performance of hop-hash vs hashbrown for a get-only workload
-for a table filled to the target load factor with a 0% success rate.
-
-![get-only benchmark results](images/find_miss.png)
-
-#### Insert-Only
-The following benchmark results show the performance of hop-hash vs hashbrown for an insert-only
-workload for a table filled to the target load factor.
-
-![insert-only benchmark results](images/insert.png)
-
-#### Insert-Only with Preallocation
-The following benchmark results show the performance of hop-hash vs hashbrown for an insert-only
-workload for a table preallocated to the target capacity.
-
-![insert-only with preallocation benchmark results](images/insert_preallocated.png)
-
-#### Remove-Only
-The following benchmark results show the performance of hop-hash vs hashbrown for a remove-only
-workload for a table filled to the target load factor.
-
-![remove-only benchmark results](images/remove.png)
