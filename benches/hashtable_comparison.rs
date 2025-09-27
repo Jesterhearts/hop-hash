@@ -289,13 +289,21 @@ fn bench_collect_find<TestItem: KeyValuePair, const MAX_SIZE: usize>(c: &mut Cri
             })
             .collect::<Vec<(u64, TestItem)>>();
 
+        let lookup_hash_and_item = hash_and_item.clone();
+
         group.throughput(Throughput::Elements(hop_capacity as u64));
         group.bench_function("hop_hash", |b| {
             b.iter_batched(
-                || hash_and_item.clone(),
-                |hash_and_item| {
+                || {
+                    let mut hash_and_item = hash_and_item.clone();
+                    hash_and_item.shuffle(&mut SmallRng::from_os_rng());
+                    let mut lookup_hash_and_item = lookup_hash_and_item.clone();
+                    lookup_hash_and_item.shuffle(&mut SmallRng::from_os_rng());
+                    (hash_and_item, lookup_hash_and_item)
+                },
+                |(hash_and_item, lookup_hash_and_item)| {
                     let mut table = HopHashTable::<TestItem>::with_capacity(0);
-                    for (hash, item) in hash_and_item.iter().take(hop_capacity).cloned() {
+                    for (hash, item) in hash_and_item.into_iter().take(hop_capacity) {
                         match table.entry(hash, |v| v.eq_key(&item), |v| v.hash_key()) {
                             hop_hash::hash_table::Entry::Vacant(entry) => {
                                 entry.insert(item);
@@ -304,7 +312,7 @@ fn bench_collect_find<TestItem: KeyValuePair, const MAX_SIZE: usize>(c: &mut Cri
                         }
                     }
 
-                    for (hash, item) in hash_and_item.iter().take(hop_capacity) {
+                    for (hash, item) in lookup_hash_and_item.iter().take(hop_capacity) {
                         let result = table.find(*hash, |v| v.eq_key(item));
                         black_box(result);
                     }
@@ -317,10 +325,16 @@ fn bench_collect_find<TestItem: KeyValuePair, const MAX_SIZE: usize>(c: &mut Cri
         group.throughput(Throughput::Elements(hashbrown_capacity as u64));
         group.bench_function("hashbrown", |b| {
             b.iter_batched(
-                || hash_and_item.clone(),
-                |hash_and_item| {
+                || {
+                    let mut hash_and_item = hash_and_item.clone();
+                    hash_and_item.shuffle(&mut SmallRng::from_os_rng());
+                    let mut lookup_hash_and_item = lookup_hash_and_item.clone();
+                    lookup_hash_and_item.shuffle(&mut SmallRng::from_os_rng());
+                    (hash_and_item, lookup_hash_and_item)
+                },
+                |(hash_and_item, lookup_hash_and_item)| {
                     let mut table = HashbrownHashTable::<TestItem>::with_capacity(0);
-                    for (hash, item) in hash_and_item.iter().take(hashbrown_capacity).cloned() {
+                    for (hash, item) in hash_and_item.into_iter().take(hashbrown_capacity) {
                         match table.entry(hash, |v| v.eq_key(&item), |v| v.hash_key()) {
                             HashbrownEntry::Vacant(entry) => {
                                 entry.insert(item);
@@ -329,7 +343,7 @@ fn bench_collect_find<TestItem: KeyValuePair, const MAX_SIZE: usize>(c: &mut Cri
                         }
                     }
 
-                    for (hash, item) in hash_and_item.iter().take(hashbrown_capacity) {
+                    for (hash, item) in lookup_hash_and_item.iter().take(hashbrown_capacity) {
                         let result = table.find(*hash, |v| v.eq_key(item));
                         black_box(result);
                     }
@@ -365,13 +379,21 @@ fn bench_collect_find_preallocated<TestItem: KeyValuePair, const MAX_SIZE: usize
             })
             .collect::<Vec<(u64, TestItem)>>();
 
+        let lookup_hash_and_item = hash_and_item.clone();
+
         group.throughput(Throughput::Elements(hop_capacity as u64));
         group.bench_function("hop_hash", |b| {
             b.iter_batched(
-                || hash_and_item.clone(),
-                |hash_and_item| {
+                || {
+                    let mut hash_and_item = hash_and_item.clone();
+                    hash_and_item.shuffle(&mut SmallRng::from_os_rng());
+                    let mut lookup_hash_and_item = lookup_hash_and_item.clone();
+                    lookup_hash_and_item.shuffle(&mut SmallRng::from_os_rng());
+                    (hash_and_item, lookup_hash_and_item)
+                },
+                |(hash_and_item, lookup_hash_and_item)| {
                     let mut table = HopHashTable::<TestItem>::with_capacity(*size);
-                    for (hash, item) in hash_and_item.iter().take(hop_capacity).cloned() {
+                    for (hash, item) in hash_and_item.into_iter().take(hop_capacity) {
                         match table.entry(hash, |v| v.eq_key(&item), |v| v.hash_key()) {
                             hop_hash::hash_table::Entry::Vacant(entry) => {
                                 entry.insert(item);
@@ -380,7 +402,7 @@ fn bench_collect_find_preallocated<TestItem: KeyValuePair, const MAX_SIZE: usize
                         }
                     }
 
-                    for (hash, item) in hash_and_item.iter().take(hop_capacity) {
+                    for (hash, item) in lookup_hash_and_item.iter().take(hop_capacity) {
                         let result = table.find(*hash, |v| v.eq_key(item));
                         black_box(result);
                     }
@@ -393,10 +415,16 @@ fn bench_collect_find_preallocated<TestItem: KeyValuePair, const MAX_SIZE: usize
         group.throughput(Throughput::Elements(hashbrown_capacity as u64));
         group.bench_function("hashbrown", |b| {
             b.iter_batched(
-                || hash_and_item.clone(),
-                |hash_and_item| {
+                || {
+                    let mut hash_and_item = hash_and_item.clone();
+                    hash_and_item.shuffle(&mut SmallRng::from_os_rng());
+                    let mut lookup_hash_and_item = lookup_hash_and_item.clone();
+                    lookup_hash_and_item.shuffle(&mut SmallRng::from_os_rng());
+                    (hash_and_item, lookup_hash_and_item)
+                },
+                |(hash_and_item, lookup_hash_and_item)| {
                     let mut table = HashbrownHashTable::<TestItem>::with_capacity(*size);
-                    for (hash, item) in hash_and_item.iter().take(hashbrown_capacity).cloned() {
+                    for (hash, item) in hash_and_item.into_iter().take(hashbrown_capacity) {
                         match table.entry(hash, |v| v.eq_key(&item), |v| v.hash_key()) {
                             HashbrownEntry::Vacant(entry) => {
                                 entry.insert(item);
@@ -404,7 +432,7 @@ fn bench_collect_find_preallocated<TestItem: KeyValuePair, const MAX_SIZE: usize
                             HashbrownEntry::Occupied(_) => unreachable!(),
                         }
                     }
-                    for (hash, item) in hash_and_item.iter().take(hashbrown_capacity) {
+                    for (hash, item) in lookup_hash_and_item.iter().take(hashbrown_capacity) {
                         let result = table.find(*hash, |v| v.eq_key(item));
                         black_box(result);
                     }
@@ -1093,6 +1121,15 @@ fn bench_mixed_probabilistic<TestItem: KeyValuePair, const MAX_SIZE: usize>(c: &
         let hop_capacity = HopHashTable::<TestItem>::with_capacity(*size).capacity();
         let hashbrown_capacity = HashbrownHashTable::<TestItem>::with_capacity(*size).capacity();
 
+        let prefill_data = (0..hop_capacity.max(hashbrown_capacity))
+            .map(|i| {
+                let key = i as u64;
+                let item = TestItem::new(key);
+                let hash = item.hash_key();
+                (hash, item)
+            })
+            .collect::<Vec<(u64, TestItem)>>();
+
         let mut rng = SmallRng::from_os_rng();
 
         let operations = (0..hop_capacity.max(hashbrown_capacity) * 3)
@@ -1117,12 +1154,21 @@ fn bench_mixed_probabilistic<TestItem: KeyValuePair, const MAX_SIZE: usize>(c: &
         group.bench_function("hop_hash", |b| {
             b.iter_batched(
                 || {
+                    let mut table = HopHashTable::<TestItem>::with_capacity(0);
+                    for (hash, item) in prefill_data.iter().take(hop_capacity).cloned() {
+                        match table.entry(hash, |v| v.eq_key(&item), |v| v.hash_key()) {
+                            hop_hash::hash_table::Entry::Vacant(entry) => {
+                                entry.insert(item);
+                            }
+                            hop_hash::hash_table::Entry::Occupied(_) => unreachable!(),
+                        }
+                    }
+
                     let mut operations = operations.clone();
                     operations.shuffle(&mut SmallRng::from_os_rng());
-                    operations
+                    (table, operations)
                 },
-                |operations| {
-                    let mut table = HopHashTable::<TestItem>::with_capacity(0);
+                |(mut table, operations)| {
                     for operation in operations.into_iter().take(hop_capacity * 3) {
                         match operation {
                             Operation::Insert => {
@@ -1168,12 +1214,21 @@ fn bench_mixed_probabilistic<TestItem: KeyValuePair, const MAX_SIZE: usize>(c: &
         group.bench_function("hashbrown", |b| {
             b.iter_batched(
                 || {
+                    let mut table = HashbrownHashTable::<TestItem>::with_capacity(0);
+                    for (hash, item) in prefill_data.iter().take(hashbrown_capacity).cloned() {
+                        match table.entry(hash, |v| v.eq_key(&item), |v| v.hash_key()) {
+                            HashbrownEntry::Vacant(entry) => {
+                                entry.insert(item);
+                            }
+                            HashbrownEntry::Occupied(_) => unreachable!(),
+                        }
+                    }
+
                     let mut operations = operations.clone();
                     operations.shuffle(&mut SmallRng::from_os_rng());
-                    operations
+                    (table, operations)
                 },
-                |operations| {
-                    let mut table = HashbrownHashTable::<TestItem>::with_capacity(0);
+                |(mut table, operations)| {
                     for operation in operations.into_iter().take(hashbrown_capacity * 3) {
                         match operation {
                             Operation::Insert => {
@@ -1235,6 +1290,15 @@ fn bench_mixed_probabilistic_zipf<TestItem: KeyValuePair, const MAX_SIZE: usize>
             let hashbrown_capacity =
                 HashbrownHashTable::<TestItem>::with_capacity(*size).capacity();
 
+            let prefill_data = (0..hop_capacity.max(hashbrown_capacity))
+                .map(|i| {
+                    let key = i as u64;
+                    let item = TestItem::new(key);
+                    let hash = item.hash_key();
+                    (hash, item)
+                })
+                .collect::<Vec<(u64, TestItem)>>();
+
             let mut rng = SmallRng::from_os_rng();
 
             let op_distr = Zipf::new(3.0, exponent).unwrap();
@@ -1261,12 +1325,21 @@ fn bench_mixed_probabilistic_zipf<TestItem: KeyValuePair, const MAX_SIZE: usize>
             group.bench_function("hop_hash", |b| {
                 b.iter_batched(
                     || {
+                        let mut table = HopHashTable::<TestItem>::with_capacity(0);
+                        for (hash, item) in prefill_data.iter().take(hop_capacity).cloned() {
+                            match table.entry(hash, |v| v.eq_key(&item), |v| v.hash_key()) {
+                                hop_hash::hash_table::Entry::Vacant(entry) => {
+                                    entry.insert(item);
+                                }
+                                hop_hash::hash_table::Entry::Occupied(_) => unreachable!(),
+                            }
+                        }
+
                         let mut operations = operations.clone();
                         operations.shuffle(&mut SmallRng::from_os_rng());
-                        operations
+                        (table, operations)
                     },
-                    |operations| {
-                        let mut table = HopHashTable::<TestItem>::with_capacity(0);
+                    |(mut table, operations)| {
                         for operation in operations.into_iter().take(hop_capacity * 3) {
                             match operation {
                                 Operation::Insert => {
@@ -1313,12 +1386,21 @@ fn bench_mixed_probabilistic_zipf<TestItem: KeyValuePair, const MAX_SIZE: usize>
             group.bench_function("hashbrown", |b| {
                 b.iter_batched(
                     || {
+                        let mut table = HashbrownHashTable::<TestItem>::with_capacity(0);
+                        for (hash, item) in prefill_data.iter().take(hashbrown_capacity).cloned() {
+                            match table.entry(hash, |v| v.eq_key(&item), |v| v.hash_key()) {
+                                HashbrownEntry::Vacant(entry) => {
+                                    entry.insert(item);
+                                }
+                                HashbrownEntry::Occupied(_) => unreachable!(),
+                            }
+                        }
+
                         let mut operations = operations.clone();
                         operations.shuffle(&mut SmallRng::from_os_rng());
-                        operations
+                        (table, operations)
                     },
-                    |operations| {
-                        let mut table = HashbrownHashTable::<TestItem>::with_capacity(0);
+                    |(mut table, operations)| {
                         for operation in operations.into_iter().take(hashbrown_capacity * 3) {
                             match operation {
                                 Operation::Insert => {
