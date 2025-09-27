@@ -16,8 +16,6 @@ cfg_if! {
         const TARGET_LOAD: f32 = 0.97;
     } else if #[cfg(feature = "density-ninety-two")] {
         const TARGET_LOAD: f32 = 0.92;
-    } else if #[cfg(feature = "density-eight-seven-five")] {
-        const TARGET_LOAD: f32 = 0.875;
     } else {
         const TARGET_LOAD: f32 = 0.92;
     }

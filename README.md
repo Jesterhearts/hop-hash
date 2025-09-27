@@ -58,9 +58,7 @@ ensuring that entries remain within a bounded neighborhood. In benchmarks, a tar
 92% consistently provides excellent performance across a variety of workloads. If you prioritize
 memory efficiency and are willing to accept a slight performance trade-off, you might consider a
 using a target load factor of 97%. This trades about 3-5% performance for about 5% decreased memory
-usage in benchmarks on my machine. Conversely, if you want to prioritize performance and are willing
-to use more memory, a lower target load factor of 87.5% can be used. This increases performance
-by 3-5% in benchmarks on my machine, at the cost of about 5% increased memory usage.
+usage in benchmarks on my machine.
 
 ## Probe Length Debugging
 The `HashTable` struct includes a `probe_histogram` method that returns a histogram of probe lengths for
