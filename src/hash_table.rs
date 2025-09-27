@@ -1,18 +1,36 @@
 use alloc::alloc::handle_alloc_error;
 use alloc::vec::Vec;
 use core::alloc::Layout;
+#[cfg(target_arch = "x86")]
+use core::arch::x86::*;
+#[cfg(target_arch = "x86_64")]
+use core::arch::x86_64::*;
 use core::fmt::Debug;
 use core::mem::MaybeUninit;
 use core::ptr::NonNull;
 
+use cfg_if::cfg_if;
+
+cfg_if! {
+    if #[cfg(feature = "density-ninety-seven")] {
+        const TARGET_LOAD: f32 = 0.97;
+    } else if #[cfg(feature = "density-ninety-two")] {
+        const TARGET_LOAD: f32 = 0.92;
+    } else if #[cfg(feature = "density-eight-seven-five")] {
+        const TARGET_LOAD: f32 = 0.875;
+    } else {
+        const TARGET_LOAD: f32 = 0.92;
+    }
+}
+
 #[inline(always)]
 fn target_load_factor(capacity: usize) -> usize {
-    (capacity as f32 * 0.92) as usize
+    (capacity as f32 * TARGET_LOAD) as usize
 }
 
 #[inline(always)]
 fn target_load_factor_inverse(capacity: usize) -> usize {
-    (capacity as f32 / 0.92) as usize
+    (capacity as f32 / TARGET_LOAD) as usize
 }
 
 #[inline(always)]
@@ -42,10 +60,20 @@ fn prefetch<T>(ptr: *const T) {
 /// improve microbenchmarks.
 const EMPTY: u8 = 0x80;
 
-/// Number of neighbors tracked per bucket. Could be larger for wider SIMD
-/// operations, but we only support SSE2. If you change this, you'll need to
-/// update a lot of code that currently assumes 16-way hopscotch.
-const HOP_RANGE: usize = 16;
+// Number of neighbors tracked per bucket. Could be larger for wider SIMD
+// operations, but we only support SSE2 + it wastes a lot of space if it's
+// wider than 16.
+cfg_if! {
+    if #[cfg(feature = "eight-way")] {
+        const HOP_RANGE: usize = 8;
+        const FULL_MASK: u16 = 0xFF;
+    } else {
+        const HOP_RANGE: usize = 16;
+        const FULL_MASK: u16 = 0xFFFF;
+    }
+}
+
+const LANES: usize = 16;
 
 #[inline(always)]
 fn hashtag(tag: u64) -> u8 {
@@ -77,10 +105,10 @@ unsafe fn find_next_movable_index<V>(
         // safe.
         unsafe {
             let hash = rehash(values.get_unchecked(idx).assume_init_ref());
-            let hopmap_index = (hash as usize & max_root_mask) * 16;
+            let hopmap_index = (hash as usize & max_root_mask) * LANES;
 
             let distance = empty_idx.wrapping_sub(hopmap_index);
-            if distance < HOP_RANGE * 16 {
+            if distance < HOP_RANGE * LANES {
                 return Some((idx, hash));
             }
         }
@@ -120,19 +148,16 @@ impl Capacity {
 #[derive(Clone, Copy)]
 #[repr(C, align(16))]
 struct HopInfo {
-    neighbors: [u8; HOP_RANGE],
+    neighbors: [u8; 16],
 }
 
 impl HopInfo {
     #[inline(always)]
     fn candidates(&self) -> u16 {
-        #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
-        {
-            return self.candidates_sse2();
-        }
-
-        #[allow(unused_variables, unreachable_code)]
-        {
+        if is_x86_feature_detected!("sse2") {
+            // SAFETY: We have ensure that we are on x86/x86_64 with SSE2 support
+            unsafe { self.candidates_sse2() }
+        } else {
             let mut bits: u16 = 0;
             for i in 0..HOP_RANGE {
                 if self.neighbors[i] > 0 {
@@ -143,10 +168,8 @@ impl HopInfo {
         }
     }
 
-    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     #[inline(always)]
-    fn candidates_sse2(&self) -> u16 {
-        use core::arch::x86_64::*;
+    unsafe fn candidates_sse2(&self) -> u16 {
         // SAFETY: We have ensured that `HopInfo` is `#[repr(C, align(16))]`,
         // with `neighbors` at offset 0. This guarantees 16-byte alignment,
         // making it safe to load via `_mm_load_si128`.
@@ -159,15 +182,12 @@ impl HopInfo {
 
     #[inline(always)]
     fn is_full(&self) -> bool {
-        #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
-        {
-            return self.is_full_sse2();
-        }
-
-        #[allow(unused_variables, unreachable_code)]
-        {
+        if is_x86_feature_detected!("sse2") {
+            // SAFETY: We have ensure that we are on x86/x86_64 with SSE2 support
+            unsafe { self.is_full_sse2() }
+        } else {
             for i in 0..HOP_RANGE {
-                if self.neighbors[i] < 16 {
+                if self.neighbors[i] < LANES as u8 {
                     return false;
                 }
             }
@@ -175,18 +195,16 @@ impl HopInfo {
         }
     }
 
-    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     #[inline(always)]
-    fn is_full_sse2(&self) -> bool {
-        use core::arch::x86_64::*;
+    unsafe fn is_full_sse2(&self) -> bool {
         // SAFETY: We have ensured that `HopInfo` is `#[repr(C, align(16))]`,
         // with `neighbors` at offset 0. This guarantees 16-byte alignment,
         // making it safe to load via `_mm_load_si128`.
         unsafe {
             let data = _mm_load_si128(self.neighbors.as_ptr() as *const __m128i);
-            let max = _mm_set1_epi8(16);
+            let max = _mm_set1_epi8(LANES as i8);
             let cmp = _mm_cmpeq_epi8(data, max);
-            _mm_movemask_epi8(cmp) == 0xFFFF
+            _mm_movemask_epi8(cmp) as u16 == FULL_MASK
         }
     }
 
@@ -200,7 +218,7 @@ impl HopInfo {
     unsafe fn clear(&mut self, n_index: usize) {
         // SAFETY: Caller ensures `n_index` is within bounds of the neighbors array
         unsafe {
-            debug_assert!(self.neighbors.get_unchecked(n_index) > &0);
+            debug_assert!(self.neighbors[n_index] > 0);
             *self.neighbors.get_unchecked_mut(n_index) -= 1;
         }
     }
@@ -215,7 +233,7 @@ impl HopInfo {
     unsafe fn set(&mut self, n_index: usize) {
         // SAFETY: Caller ensures `n_index` is within bounds of the neighbors array
         unsafe {
-            debug_assert!(self.neighbors.get_unchecked(n_index) < &16);
+            debug_assert!(self.neighbors[n_index] < LANES as u8);
             *self.neighbors.get_unchecked_mut(n_index) += 1;
         }
     }
@@ -235,9 +253,9 @@ impl DataLayout {
         let hopmap_layout = Layout::array::<HopInfo>(capacity.max_root_mask().wrapping_add(1))
             .expect("allocation size overflow");
         let tags_layout =
-            Layout::array::<u8>(capacity.base * 16).expect("allocation size overflow");
-        let buckets_layout =
-            Layout::array::<MaybeUninit<V>>(capacity.base * 16).expect("allocation size overflow");
+            Layout::array::<u8>(capacity.base * LANES).expect("allocation size overflow");
+        let buckets_layout = Layout::array::<MaybeUninit<V>>(capacity.base * LANES)
+            .expect("allocation size overflow");
 
         let (layout, hopmap_offset) = Layout::new::<()>().extend(hopmap_layout).unwrap();
         let (layout, tags_offset) = layout.extend(tags_layout).unwrap();
@@ -376,7 +394,7 @@ impl<V> Debug for HashTable<V> {
                     &self
                         .tags_ptr()
                         .as_ref()
-                        .chunks(16)
+                        .chunks(LANES)
                         .map(|w| {
                             let mut items = Vec::new();
                             for b in w {
@@ -487,7 +505,7 @@ impl<V> HashTable<V> {
     /// The actual capacity may be larger than requested due to the bucket-based
     /// organization.
     pub fn with_capacity(capacity: usize) -> Self {
-        let capacity: Capacity = target_load_factor_inverse(capacity.div_ceil(16)).into();
+        let capacity: Capacity = target_load_factor_inverse(capacity.div_ceil(LANES)).into();
 
         let layout = DataLayout::new::<V>(capacity);
         let alloc = if layout.layout.size() == 0 {
@@ -518,7 +536,7 @@ impl<V> HashTable<V> {
             alloc,
             overflow: Vec::new(),
             populated: 0,
-            max_pop: target_load_factor(capacity.max_root_mask().wrapping_add(1) * 16),
+            max_pop: target_load_factor(capacity.max_root_mask().wrapping_add(1) * LANES),
             max_root_mask: capacity.max_root_mask(),
             _phantom: core::marker::PhantomData,
         }
@@ -542,7 +560,7 @@ impl<V> HashTable<V> {
                 if self.layout.layout.size() == 0 {
                     0
                 } else {
-                    (self.max_root_mask.wrapping_add(1) + HOP_RANGE) * 16
+                    (self.max_root_mask.wrapping_add(1) + HOP_RANGE) * LANES
                 },
             )
         }
@@ -556,7 +574,7 @@ impl<V> HashTable<V> {
                 if self.layout.layout.size() == 0 {
                     0
                 } else {
-                    (self.max_root_mask.wrapping_add(1) + HOP_RANGE) * 16
+                    (self.max_root_mask.wrapping_add(1) + HOP_RANGE) * LANES
                 },
             )
         }
@@ -655,7 +673,7 @@ impl<V> HashTable<V> {
         }
 
         let required = self.populated + self.overflow.len();
-        let new_capacity: Capacity = target_load_factor_inverse(required.div_ceil(16)).into();
+        let new_capacity: Capacity = target_load_factor_inverse(required.div_ceil(LANES)).into();
         if new_capacity.max_root_mask() < self.max_root_mask {
             self.do_resize_rehash(new_capacity, &rehash);
         }
@@ -675,7 +693,8 @@ impl<V> HashTable<V> {
     pub fn reserve(&mut self, additional: usize, rehash: impl Fn(&V) -> u64) {
         let required = self.populated.saturating_add(additional);
         if required > self.max_pop {
-            let new_capacity: Capacity = target_load_factor_inverse(required.div_ceil(16)).into();
+            let new_capacity: Capacity =
+                target_load_factor_inverse(required.div_ceil(LANES)).into();
             self.do_resize_rehash(new_capacity, &rehash);
         }
     }
@@ -710,8 +729,8 @@ impl<V> HashTable<V> {
             // an occupied tag.
             let value = unsafe { bucket_mut.assume_init_read() };
 
-            let offset = index - hop_bucket * 16;
-            let n_index = offset / 16;
+            let offset = index - hop_bucket * LANES;
+            let n_index = offset / LANES;
             // SAFETY: We have validated that `index` is a valid slot index from
             // `search_neighborhood`, `hop_bucket` is also valid, and `n_index`
             // is derived from these, ensuring it is a valid neighbor index.
@@ -778,18 +797,19 @@ impl<V> HashTable<V> {
         eq: impl Fn(&V) -> bool,
     ) -> Option<usize> {
         let tag = hashtag(hash);
-
-        let base = bucket * 16;
-        // SAFETY: We have ensured `base` is valid, calculated from a validated bucket
-        // and an index within the neighborhood.
-        if let Some(value) = unsafe { self.search_tags(&eq, tag, base) } {
-            return Some(value);
-        }
+        let base = bucket * LANES;
 
         // SAFETY: Caller ensures that `bucket` is within bounds, as it is derived from
         // the hash and `max_root_mask`.
         unsafe {
-            prefetch(self.tags_ptr().as_ref().as_ptr().add(bucket * 16 + 16));
+            prefetch(self.hopmap_ptr().as_ref().as_ptr().add(bucket));
+            prefetch(self.tags_ptr().as_ref().as_ptr().add(base + LANES));
+        }
+
+        // SAFETY: We have ensured `base` is valid, calculated from a validated bucket
+        // and an index within the neighborhood.
+        if let Some(value) = unsafe { self.search_tags(&eq, tag, base) } {
+            return Some(value);
         }
 
         // SAFETY: Caller ensures that `bucket` is within bounds, as it is derived from
@@ -810,22 +830,13 @@ impl<V> HashTable<V> {
             next_index = neighborhood_mask.trailing_zeros() as usize;
 
             if index != 0 {
-                let base = bucket * 16 + index * 16;
+                let base = bucket * LANES + index * LANES;
 
                 // SAFETY: We have ensured `base` is valid, calculated from a validated bucket
                 // and an index within the neighborhood.
                 if let Some(value) = unsafe { self.search_tags(&eq, tag, base) } {
                     return Some(value);
                 }
-            }
-
-            unsafe {
-                prefetch(
-                    self.tags_ptr()
-                        .as_ref()
-                        .as_ptr()
-                        .add(bucket * 16 + next_index * 16),
-                );
             }
         }
         None
@@ -879,18 +890,14 @@ impl<V> HashTable<V> {
     /// `bucket + 16` does not exceed the bounds of the tags array.
     #[inline(always)]
     unsafe fn scan_tags(&self, bucket: usize, tag: u8) -> u16 {
-        #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
-        {
+        if is_x86_feature_detected!("sse2") {
             // SAFETY: We have validated the bucket bounds, as per the requirements of
             // `scan_tags`.
-            return unsafe { self.scan_tags_sse2(bucket, tag) };
-        }
-
-        #[allow(unused_variables, unreachable_code)]
-        {
+            unsafe { self.scan_tags_sse2(bucket, tag) }
+        } else {
             let meta_ptr = self.tags_ptr();
             let mut tags: u16 = 0;
-            for i in 0..16 {
+            for i in 0..LANES {
                 // SAFETY: We have ensured `bucket + i` is within bounds, as `bucket` is a valid
                 // base for `scan_tags`.
                 let t = unsafe { *meta_ptr.as_ref().get_unchecked(bucket + i) };
@@ -911,9 +918,7 @@ impl<V> HashTable<V> {
     /// relies on `EMPTY` (0x80) using the sign bit for complementary SIMD
     /// scans.
     #[inline(always)]
-    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     unsafe fn scan_tags_sse2(&self, bucket: usize, tag: u8) -> u16 {
-        use core::arch::x86_64::*;
         // SAFETY: We have validated that `bucket` is within bounds, allowing for a safe
         // load of 16 consecutive bytes.
         unsafe {
@@ -935,7 +940,7 @@ impl<V> HashTable<V> {
 
     #[inline(always)]
     fn absolute_index(&self, hop_bucket: usize, n_index: usize) -> usize {
-        hop_bucket * 16 + n_index
+        hop_bucket * LANES + n_index
     }
 
     /// Internal entry implementation that performs the actual lookup.
@@ -957,7 +962,7 @@ impl<V> HashTable<V> {
         let index = unsafe { self.search_neighborhood(hash, hop_bucket, &eq) };
         if let Some(index) = index {
             return Entry::Occupied(OccupiedEntry {
-                n_index: index - hop_bucket * 16,
+                n_index: index - hop_bucket * LANES,
                 table: self,
                 root_index: hop_bucket,
                 overflow_index: None,
@@ -1025,13 +1030,13 @@ impl<V> HashTable<V> {
                 table: self,
                 hopmap_root: hop_bucket,
                 hash,
-                n_index: absolute_empty_idx - hop_bucket * 16,
+                n_index: absolute_empty_idx - hop_bucket * LANES,
                 is_overflow: false,
             };
         }
 
         while absolute_empty_idx >= self.absolute_index(hop_bucket + HOP_RANGE, 0) {
-            let bubble_base = absolute_empty_idx - (HOP_RANGE - 1) * 16;
+            let bubble_base = absolute_empty_idx - (HOP_RANGE - 1) * LANES;
 
             // SAFETY: We have ensured that `bubble_base` and `absolute_empty_idx` are
             // within the table bounds.
@@ -1060,9 +1065,9 @@ impl<V> HashTable<V> {
                     let hopmap_abs_idx = self.absolute_index(hopmap_root, 0);
 
                     let old_off_abs = absolute_idx - hopmap_abs_idx;
-                    let old_n_index = old_off_abs / 16;
+                    let old_n_index = old_off_abs / LANES;
                     let new_off_abs = absolute_empty_idx - hopmap_abs_idx;
-                    let new_n_index = new_off_abs / 16;
+                    let new_n_index = new_off_abs / LANES;
 
                     // SAFETY: We have ensured through `find_next_movable_index` that the moved
                     // element is within the hop-neighborhood of its
@@ -1109,7 +1114,7 @@ impl<V> HashTable<V> {
         // `find_next_unoccupied`.
         debug_assert!(unsafe { !self.is_occupied(absolute_empty_idx) });
         VacantEntry {
-            n_index: absolute_empty_idx - hop_bucket * 16,
+            n_index: absolute_empty_idx - hop_bucket * LANES,
             table: self,
             hopmap_root: hop_bucket,
             hash,
@@ -1165,13 +1170,9 @@ impl<V> HashTable<V> {
     unsafe fn find_next_unoccupied(&self, start: usize) -> Option<usize> {
         // SAFETY: start is validated to be within table bounds by caller
         unsafe {
-            #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
-            {
-                return self.find_next_unoccupied_sse2(start);
-            }
-
-            #[allow(unused_variables, unreachable_code)]
-            {
+            if is_x86_feature_detected!("sse2") {
+                self.find_next_unoccupied_sse2(start)
+            } else {
                 self.tags_ptr().as_ref()[start..]
                     .iter()
                     .position(|&b| b == EMPTY)
@@ -1188,7 +1189,6 @@ impl<V> HashTable<V> {
     /// This relies on `EMPTY` (0x80) having the sign bit set for `movemask`
     /// to find empty slots. Unaligned loads are performed but guarded by
     /// bounds checks.
-    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     #[inline(always)]
     unsafe fn find_next_unoccupied_sse2(&self, start: usize) -> Option<usize> {
         use core::arch::x86_64::*;
@@ -1198,7 +1198,7 @@ impl<V> HashTable<V> {
             let len = (meta_ptr.as_ref().len()).saturating_sub(start);
 
             let mut offset = 0;
-            while offset + 16 <= len {
+            while offset + LANES <= len {
                 let data = _mm_loadu_si128(tags_ptr.add(offset) as *const __m128i);
                 let mask = _mm_movemask_epi8(data) as u16;
 
@@ -1207,7 +1207,7 @@ impl<V> HashTable<V> {
                     return Some(start + offset + tz);
                 }
 
-                offset += 16;
+                offset += LANES;
             }
 
             while offset < len {
@@ -1353,8 +1353,8 @@ impl<V> HashTable<V> {
         let old_alloc = core::mem::replace(&mut self.alloc, new_alloc);
         let old_max_root = self.max_root_mask.wrapping_add(1);
         let old_base = old_max_root + HOP_RANGE;
-        let old_empty_words = old_base * 16;
-        self.max_pop = target_load_factor(capacity.max_root_mask().wrapping_add(1) * 16);
+        let old_empty_words = old_base * LANES;
+        self.max_pop = target_load_factor(capacity.max_root_mask().wrapping_add(1) * LANES);
         self.max_root_mask = capacity.max_root_mask();
         if self.populated == 0 {
             // SAFETY: old_layout.layout.size() checked non-zero, old_alloc from valid
@@ -1378,7 +1378,7 @@ impl<V> HashTable<V> {
         let old_buckets: NonNull<[MaybeUninit<V>]> = unsafe {
             NonNull::slice_from_raw_parts(
                 old_alloc.add(old_layout.buckets_offset).cast(),
-                old_base * 16,
+                old_empty_words,
             )
         };
 
@@ -1390,77 +1390,109 @@ impl<V> HashTable<V> {
             // moved-out contents; only the new table will drop values.
             self.populated = 0;
 
-            let mut pending_indexes = Vec::with_capacity(old_max_root * 16);
-            for (bucket_index, &tag) in old_emptymap.as_ref().iter().enumerate() {
+            'tags: for (bucket_index, &tag) in old_emptymap.as_ref().iter().enumerate() {
                 if tag == EMPTY {
                     continue;
                 }
 
-                let hash = rehash(
-                    old_buckets
-                        .as_ref()
-                        .get_unchecked(bucket_index)
-                        .assume_init_ref(),
-                );
-                let bucket = self.hopmap_index(hash);
-
-                if self.is_occupied(self.absolute_index(bucket, 0)) {
-                    pending_indexes.push((bucket_index, hash));
-                    continue;
+                if old_base < capacity.base {
+                    prefetch(
+                        self.hopmap_ptr()
+                            .as_ref()
+                            .as_ptr()
+                            .add(bucket_index / LANES),
+                    );
+                    prefetch(
+                        self.hopmap_ptr()
+                            .as_ref()
+                            .as_ptr()
+                            .add(bucket_index / LANES + old_base),
+                    );
+                    prefetch(self.buckets_ptr().as_ref().as_ptr().add(bucket_index));
+                    prefetch(
+                        self.buckets_ptr()
+                            .as_ref()
+                            .as_ptr()
+                            .add(bucket_index + old_max_root),
+                    );
                 }
+
+                let value = old_buckets
+                    .as_ref()
+                    .get_unchecked(bucket_index)
+                    .assume_init_read();
+
+                let hash = rehash(&value);
+
+                let bucket = self.hopmap_index(hash);
+                let base = self.absolute_index(bucket, 0);
+
+                let absolute_empty_idx = match self.find_next_unoccupied(base) {
+                    Some(mut idx) => {
+                        debug_assert!(!self.is_occupied(idx));
+                        while idx >= self.absolute_index(bucket + HOP_RANGE, 0) {
+                            let bubble_base = idx - (HOP_RANGE - 1) * LANES;
+
+                            if let Some((absolute_idx, moved_hash)) = find_next_movable_index(
+                                self.buckets_ptr().as_ref(),
+                                bubble_base,
+                                idx,
+                                self.max_root_mask,
+                                &rehash,
+                            ) {
+                                core::ptr::copy_nonoverlapping(
+                                    self.buckets_ptr().as_ref().as_ptr().add(absolute_idx),
+                                    self.buckets_ptr().as_mut().as_mut_ptr().add(idx),
+                                    1,
+                                );
+
+                                let hopmap_root = self.hopmap_index(moved_hash);
+                                let hopmap_abs_idx = self.absolute_index(hopmap_root, 0);
+
+                                let old_off_abs = absolute_idx - hopmap_abs_idx;
+                                let old_n_index = old_off_abs / LANES;
+                                let new_off_abs = idx - hopmap_abs_idx;
+                                let new_n_index = new_off_abs / LANES;
+
+                                self.hopmap_ptr()
+                                    .as_mut()
+                                    .get_unchecked_mut(hopmap_root)
+                                    .clear(old_n_index);
+                                self.hopmap_ptr()
+                                    .as_mut()
+                                    .get_unchecked_mut(hopmap_root)
+                                    .set(new_n_index);
+
+                                self.clear_occupied(absolute_idx);
+                                self.set_occupied(idx, hashtag(moved_hash));
+                                idx = absolute_idx;
+                            } else {
+                                self.overflow.push(value);
+                                continue 'tags;
+                            }
+                        }
+                        idx
+                    }
+                    None => {
+                        self.overflow.push(value);
+                        continue;
+                    }
+                };
 
                 self.populated += 1;
 
-                core::ptr::copy_nonoverlapping(
-                    old_buckets.as_ref().get_unchecked(bucket_index).as_ptr(),
-                    self.buckets_ptr()
-                        .as_mut()
-                        .get_unchecked_mut(self.absolute_index(bucket, 0))
-                        .as_mut_ptr(),
-                    1,
-                );
-                self.set_occupied(self.absolute_index(bucket, 0), hashtag(hash));
-                self.hopmap_ptr().as_mut().get_unchecked_mut(bucket).set(0);
-            }
+                let n_index = (absolute_empty_idx - base) / LANES;
 
-            let mut needs_shuffle = Vec::with_capacity(pending_indexes.len());
-            for (old_index, hash) in pending_indexes {
-                let bucket = self.hopmap_index(hash);
-                let empty = self.find_next_unoccupied(self.absolute_index(bucket, 0));
-                if empty.is_none() || empty.unwrap() > self.absolute_index(bucket + HOP_RANGE, 0) {
-                    needs_shuffle.push((old_index, hash));
-                    continue;
-                }
-                self.populated += 1;
-
-                let absolute_empty_idx = empty.unwrap();
-                core::ptr::copy_nonoverlapping(
-                    old_buckets.as_ref().get_unchecked(old_index).as_ptr(),
-                    self.buckets_ptr()
-                        .as_mut()
-                        .get_unchecked_mut(absolute_empty_idx)
-                        .as_mut_ptr(),
-                    1,
-                );
-                let n_index = (absolute_empty_idx - bucket * 16) / 16;
                 self.set_occupied(absolute_empty_idx, hashtag(hash));
-                // SAFETY: `absolute_empty_idx` is guaranteed to be within the hop-neighborhood
-                // of `bucket` by the check before this block. Therefore, `n_index` is a
-                // valid neighbor index (< HOP_RANGE).
                 self.hopmap_ptr()
                     .as_mut()
                     .get_unchecked_mut(bucket)
                     .set(n_index);
-            }
 
-            for (old_index, hash) in needs_shuffle {
-                let bucket = self.hopmap_index(hash);
-                self.do_vacant_lookup(hash, bucket, rehash).insert(
-                    old_buckets
-                        .as_ref()
-                        .get_unchecked(old_index)
-                        .assume_init_read(),
-                );
+                self.buckets_ptr()
+                    .as_mut()
+                    .get_unchecked_mut(absolute_empty_idx)
+                    .write(value);
             }
 
             for overflow in overflows {
@@ -1506,11 +1538,13 @@ impl<V> HashTable<V> {
     /// `0..HOP_RANGE-1` represent in-table probe lengths, and index
     /// `HOP_RANGE` represents overflow entries, and a second vector of the
     /// same length representing the total number of distance from the root for
-    /// each bin.
+    /// each bin. The first vector counts how many buckets will have to be
+    /// scanned to rule out a match, where the second vector counts how
+    /// spatially dispersed the entries in the buckets are.
     #[cfg(test)]
     pub fn probe_histogram(&self) -> (alloc::vec::Vec<usize>, alloc::vec::Vec<usize>) {
         let mut hist = alloc::vec![0usize; HOP_RANGE + 1];
-        let mut dist_hist = alloc::vec![0usize; HOP_RANGE ];
+        let mut dist_hist = alloc::vec![0usize; HOP_RANGE];
 
         if self.populated == 0 {
             return (hist, dist_hist);
@@ -1526,7 +1560,7 @@ impl<V> HashTable<V> {
                         .neighbors
                         .iter()
                         .copied()
-                        .map(|u| u as usize)
+                        .map(|n| usize::from(n > 0))
                         .sum::<usize>();
 
                     while mask != 0 {
@@ -1551,7 +1585,7 @@ impl<V> HashTable<V> {
         let total_slots = if self.max_root_mask == usize::MAX {
             0
         } else {
-            (self.max_root_mask.wrapping_add(1) + HOP_RANGE) * 16
+            (self.max_root_mask.wrapping_add(1) + HOP_RANGE) * LANES
         };
 
         let mut occupied_slots = 0;
@@ -1597,7 +1631,11 @@ impl<V> HashTable<V> {
     #[cfg(all(test, feature = "std"))]
     pub fn print_probe_histogram(&self) {
         let (hist, dist_hist) = self.probe_histogram();
-        let max = *hist.iter().max().unwrap_or(&0);
+        let max = *hist
+            .iter()
+            .max()
+            .unwrap_or(&0)
+            .max(dist_hist.iter().max().unwrap_or(&0));
         if max == 0 {
             println!("probe histogram: empty");
             return;
@@ -1605,7 +1643,11 @@ impl<V> HashTable<V> {
 
         let max_bar = 60usize;
         let total_units = max_bar * 8;
-        println!("probe histogram ({} entries):", self.populated);
+        println!(
+            "probe histogram ({} entries, {}x16 slots):",
+            self.populated,
+            self.max_root_mask.wrapping_add(1) + HOP_RANGE
+        );
 
         let make_bar = |count: usize| -> alloc::string::String {
             if count == 0 || max == 0 {
@@ -1769,7 +1811,7 @@ impl<'a, V> VacantEntry<'a, V> {
             // to be in the hop-neighborhood by `do_vacant_lookup`. Thus, `neighbor`
             // is a valid index (< HOP_RANGE), and `target_index` is a valid,
             // unoccupied slot within bounds.
-            let neighbor = self.n_index / 16;
+            let neighbor = self.n_index / LANES;
             debug_assert!(neighbor < HOP_RANGE);
             self.table
                 .hopmap_ptr()
@@ -1777,7 +1819,7 @@ impl<'a, V> VacantEntry<'a, V> {
                 .get_unchecked_mut(self.hopmap_root)
                 .set(neighbor);
 
-            let target_index = self.hopmap_root * 16 + self.n_index;
+            let target_index = self.hopmap_root * LANES + self.n_index;
             self.table.set_occupied(target_index, hashtag(self.hash));
 
             self.table
@@ -1823,7 +1865,7 @@ impl<'a, V> OccupiedEntry<'a, V> {
             self.table
                 .buckets_ptr()
                 .as_ref()
-                .get_unchecked(self.root_index * 16 + self.n_index)
+                .get_unchecked(self.root_index * LANES + self.n_index)
                 .assume_init_ref()
         }
     }
@@ -1840,7 +1882,7 @@ impl<'a, V> OccupiedEntry<'a, V> {
             self.table
                 .buckets_ptr()
                 .as_mut()
-                .get_unchecked_mut(self.root_index * 16 + self.n_index)
+                .get_unchecked_mut(self.root_index * LANES + self.n_index)
                 .assume_init_mut()
         }
     }
@@ -1858,7 +1900,7 @@ impl<'a, V> OccupiedEntry<'a, V> {
             self.table
                 .buckets_ptr()
                 .as_mut()
-                .get_unchecked_mut(self.root_index * 16 + self.n_index)
+                .get_unchecked_mut(self.root_index * LANES + self.n_index)
                 .assume_init_mut()
         }
     }
@@ -1878,9 +1920,9 @@ impl<'a, V> OccupiedEntry<'a, V> {
                 .table
                 .buckets_ptr()
                 .as_ref()
-                .get_unchecked(self.root_index * 16 + self.n_index);
+                .get_unchecked(self.root_index * LANES + self.n_index);
             let value = bucket_mut.assume_init_read();
-            let neighbor = self.n_index / 16;
+            let neighbor = self.n_index / LANES;
             // SAFETY: `self.n_index` is the offset from the root bucket, and is
             // guaranteed to be within the hop-neighborhood by `search_neighborhood`.
             // Therefore, `neighbor` will be a valid neighbor index (< HOP_RANGE).
@@ -1891,7 +1933,7 @@ impl<'a, V> OccupiedEntry<'a, V> {
                 .clear(neighbor);
 
             self.table
-                .clear_occupied(self.root_index * 16 + self.n_index);
+                .clear_occupied(self.root_index * LANES + self.n_index);
 
             value
         }
@@ -1921,7 +1963,7 @@ impl<'a, V> Iterator for Iter<'a, V> {
         // SAFETY: slot_index bounds checked, values confirmed initialized by occupied
         // tags
         unsafe {
-            let total_slots = (self.table.max_root_mask.wrapping_add(1) + HOP_RANGE) * 16;
+            let total_slots = (self.table.max_root_mask.wrapping_add(1) + HOP_RANGE) * LANES;
             while self.bucket_index < total_slots {
                 if self.table.is_occupied(self.bucket_index) {
                     let bucket = &self
@@ -1986,7 +2028,7 @@ impl<'a, V> Iterator for Drain<'a, V> {
         // SAFETY: slot_index bounds checked, values confirmed initialized by occupied
         // tags
         unsafe {
-            let total_slots = (self.table.max_root_mask.wrapping_add(1) + HOP_RANGE) * 16;
+            let total_slots = (self.table.max_root_mask.wrapping_add(1) + HOP_RANGE) * LANES;
             while self.bucket_index < total_slots {
                 if self.table.is_occupied(self.bucket_index) {
                     self.table.populated -= 1;
