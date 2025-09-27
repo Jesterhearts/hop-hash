@@ -82,6 +82,9 @@ hashing scheme is working.
 - **Key Constraints**: The `Eq` and `Hash` implementations for keys must be consistent.
 
 ## A Note on Benchmarks
+
+[Benchmark Results](benches/README.md)
+
 Benchmarks comparing `hop-hash` to `hashbrown` are available in the `benches` directory. These
 benchmarks demonstrate the performance characteristics of `hop-hash` under various workloads and
 configurations.
