@@ -170,6 +170,10 @@ impl HopInfo {
         }
     }
 
+    /// Get a bitmask of neighbor slots that are occupied (non-zero).
+    ///
+    /// # Safety
+    /// - Caller must ensure the CPU supports SSE2 instructions.
     #[inline(always)]
     unsafe fn candidates_sse2(&self) -> u16 {
         // SAFETY: We have ensured that `HopInfo` is `#[repr(C, align(16))]`,
@@ -199,6 +203,10 @@ impl HopInfo {
         }
     }
 
+    /// Check if all neighbor slots are occupied (equal to LANES).
+    ///
+    /// # Safety
+    /// - Caller must ensure the CPU supports SSE2 instructions.
     #[inline(always)]
     unsafe fn is_full_sse2(&self) -> bool {
         // SAFETY: We have ensured that `HopInfo` is `#[repr(C, align(16))]`,
@@ -342,8 +350,10 @@ pub struct ProbeHistogram {
     #[cfg_attr(not(feature = "std"), allow(dead_code))]
     buckets: usize,
     /// Histogram of probe lengths by number of buckets probed.
-    pub probe_length_by_bucket: [usize; HOP_RANGE + 1],
+    pub probe_length_by_bucket: [usize; HOP_RANGE],
     /// Histogram of probe lengths by number of entries in probed buckets.
+    ///
+    /// The final index indicates the overflow count (will almost always be 0).
     ///
     /// This chart can be a bit confusing at first glance. The "count" here
     /// refers to the total number of entries in all buckets that were
@@ -418,10 +428,6 @@ impl ProbeHistogram {
             let bar = make_bar(count);
             println!("{} | {} ({})", label, bar, count);
         }
-
-        let of_count = self.probe_length_by_bucket[HOP_RANGE];
-        let of_bar = make_bar(of_count);
-        println!("OF | {} ({})", of_bar, of_count);
 
         println!("Probe length by count (in-table entries):");
         for (i, &count) in self
@@ -1670,7 +1676,7 @@ impl<V> HashTable<V> {
         let mut probe_hist = ProbeHistogram {
             populated: self.populated,
             buckets: self.max_root_mask.wrapping_add(1) + HOP_RANGE,
-            probe_length_by_bucket: [0; HOP_RANGE + 1],
+            probe_length_by_bucket: [0; HOP_RANGE],
             probe_length_by_count: [0; HOP_RANGE + 1],
             bucket_distribution: [0; HOP_RANGE],
         };
@@ -1708,7 +1714,6 @@ impl<V> HashTable<V> {
             }
 
             probe_hist.probe_length_by_count[HOP_RANGE] = self.overflow.len();
-            probe_hist.probe_length_by_bucket[HOP_RANGE] = self.overflow.len();
         }
 
         probe_hist
