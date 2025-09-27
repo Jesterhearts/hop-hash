@@ -46,39 +46,47 @@ which randomizes between find, insert, and remove operations using a zipf distri
 #### Iteration
 The following benchmark results show the performance of hop-hash vs hashbrown for iterating over all
 elements of a table filled to the target load factor.
+
 ![iteration benchmark results](images/iteration.png)
 
 #### Drain
 The following benchmark results show the performance of hop-hash vs hashbrown for draining all
 elements of a table filled to the target load factor.
+
 ![drain benchmark results](images/drain.png)
 
 #### Get-Only (100% Find)
 The following benchmark results show the performance of hop-hash vs hashbrown for a get-only workload
 for a table filled to the target load factor with a 100% success rate.
+
 ![get-only benchmark results](images/find_hit.png)
 
 #### Get-Only (50% Find)
 The following benchmark results show the performance of hop-hash vs hashbrown for a get-only workload
 for a table filled to the target load factor with a 50% success rate.
+
 ![get-only benchmark results](images/find_hit_miss.png)
 
 #### Get-Only (0% Find)
 The following benchmark results show the performance of hop-hash vs hashbrown for a get-only workload
 for a table filled to the target load factor with a 0% success rate.
+
 ![get-only benchmark results](images/find_miss.png)
 
 #### Insert-Only
 The following benchmark results show the performance of hop-hash vs hashbrown for an insert-only
 workload for a table filled to the target load factor.
+
 ![insert-only benchmark results](images/insert.png)
 
 #### Insert-Only with Preallocation
 The following benchmark results show the performance of hop-hash vs hashbrown for an insert-only
 workload for a table preallocated to the target capacity.
+
 ![insert-only with preallocation benchmark results](images/insert_preallocated.png)
 
 #### Remove-Only
 The following benchmark results show the performance of hop-hash vs hashbrown for a remove-only
 workload for a table filled to the target load factor.
+
 ![remove-only benchmark results](images/remove.png)
