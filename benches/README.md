@@ -21,7 +21,8 @@ In all cases, Hashbrown is represented with the red line, and Hop-hash is repres
 
 ### Mixed Workloads
 #### Insert/Remove/Get/Insert Mix
-The following benchmark results show the performance of hop-hash vs hashbrown for a mixed workload which:
+The following benchmark results show the performance of hop-hash vs hashbrown for a mixed workload
+which:
 - Inserts up to the target capacity & load factor, so the table is full
 - Removes half of the items in the table
 - Looks up all of the original elements (half will be misses)
@@ -37,10 +38,19 @@ which randomizes between find, insert, and remove operations in a 50/25/25 ratio
 
 #### Find/Insert/Remove Mix Zipf 1.0/1.3
 The following benchmark results show the performance of hop-hash vs hashbrown for a mixed workload
-which randomizes between find, insert, and remove operations using a zipf distribution with s=1.0 and s=1.3.
+which randomizes between find, insert, and remove operations using a zipf distribution with s=1.0
+and s=1.3.
 
 ![mixed workload benchmark results](images/mixed_probabilistic_zipf_1.0.png)
 ![mixed workload benchmark results](images/mixed_probabilistic_zipf_1.3.png)
+
+#### Churn
+This benchmark simulates a workload where the table is kept at a steady state, with random inserts
+and removals. A batch of items equal to 2x the target capacity is allocated, then iterated over in
+random order. If an item is not in the table already, it is inserted. If it is already in the table,
+it is removed. 
+
+![churn workload benchmark results](images/churn.png)
 
 ### Single Operation Workloads
 #### Iteration
