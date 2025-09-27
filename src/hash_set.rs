@@ -610,6 +610,9 @@ where
 
 #[cfg(test)]
 mod tests {
+    use alloc::string::ToString;
+    use alloc::vec;
+    use alloc::vec::Vec;
     use core::hash::BuildHasher;
 
     use rand::TryRngCore;
@@ -757,7 +760,7 @@ mod tests {
         set.insert(2);
         set.insert(3);
 
-        let values: std::collections::HashSet<i32> = set.iter().copied().collect();
+        let values: Vec<i32> = set.iter().copied().collect();
         assert_eq!(values.len(), 3);
         assert!(values.contains(&1));
         assert!(values.contains(&2));
@@ -771,7 +774,7 @@ mod tests {
         set.insert(2);
         set.insert(3);
 
-        let values: std::collections::HashSet<i32> = (&set).into_iter().copied().collect();
+        let values: Vec<i32> = (&set).into_iter().copied().collect();
         assert_eq!(values.len(), 3);
         assert!(values.contains(&1));
         assert!(values.contains(&2));
@@ -785,7 +788,7 @@ mod tests {
         set.insert(2);
         set.insert(3);
 
-        let drained: std::collections::HashSet<i32> = set.drain().collect();
+        let drained: Vec<i32> = set.drain().collect();
         assert_eq!(drained.len(), 3);
         assert!(set.is_empty());
 

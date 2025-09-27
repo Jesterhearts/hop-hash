@@ -154,7 +154,9 @@ struct HopInfo {
 impl HopInfo {
     #[inline(always)]
     fn candidates(&self) -> u16 {
-        if is_x86_feature_detected!("sse2") {
+        if (cfg!(target_arch = "x86") || cfg!(target_arch = "x86_64"))
+            && cfg!(target_feature = "sse2")
+        {
             // SAFETY: We have ensure that we are on x86/x86_64 with SSE2 support
             unsafe { self.candidates_sse2() }
         } else {
@@ -182,7 +184,9 @@ impl HopInfo {
 
     #[inline(always)]
     fn is_full(&self) -> bool {
-        if is_x86_feature_detected!("sse2") {
+        if (cfg!(target_arch = "x86") || cfg!(target_arch = "x86_64"))
+            && cfg!(target_feature = "sse2")
+        {
             // SAFETY: We have ensure that we are on x86/x86_64 with SSE2 support
             unsafe { self.is_full_sse2() }
         } else {
@@ -325,6 +329,122 @@ impl DebugStats {
                 (self.wasted_bytes as f64 / self.total_bytes as f64) * 100.0
             }
         );
+    }
+}
+
+/// Probe histogram for analyzing probe lengths.
+///
+/// Test-only: compiled only with `cfg(test)`.
+#[cfg(test)]
+pub struct ProbeHistogram {
+    #[cfg_attr(not(feature = "std"), allow(dead_code))]
+    populated: usize,
+    #[cfg_attr(not(feature = "std"), allow(dead_code))]
+    buckets: usize,
+    /// Histogram of probe lengths by number of buckets probed.
+    pub probe_length_by_bucket: [usize; HOP_RANGE + 1],
+    /// Histogram of probe lengths by number of entries in probed buckets.
+    ///
+    /// This chart can be a bit confusing at first glance. The "count" here
+    /// refers to the total number of entries in all buckets that were
+    /// probed to find the target entry. For example, if the target entry
+    /// was found after probing 3 buckets, and those buckets had 2, 4, and 1
+    /// entries respectively, the count would be 7 for a probe length of 3,
+    /// while the probe_length_by_bucket histogram would record a count of 1 for
+    /// a probe length of 3, and the bucket_distribution histogram would record
+    /// counts of 2, 4, and 1 for buckets at index 0, 1, and 2 respectively.
+    pub probe_length_by_count: [usize; HOP_RANGE + 1],
+    /// Distribution of number of entries in each bucket relative to its root.
+    /// This shows how tightly clustered entries are around their ideal bucket
+    /// (bucket 0).
+    pub bucket_distribution: [usize; HOP_RANGE],
+}
+
+#[cfg(test)]
+impl ProbeHistogram {
+    /// Pretty-print the probe histogram.
+    #[cfg(feature = "std")]
+    pub fn print(&self) {
+        let max = *self
+            .probe_length_by_bucket
+            .iter()
+            .max()
+            .unwrap_or(&0)
+            .max(self.probe_length_by_count.iter().max().unwrap_or(&0))
+            .max(self.bucket_distribution.iter().max().unwrap_or(&0));
+        if max == 0 {
+            println!("probe histogram: empty");
+            return;
+        }
+
+        let max_bar = 60usize;
+        let total_units = max_bar * 8;
+        println!(
+            "probe length by bucket ({} entries, {}x16 slots):",
+            self.populated, self.buckets
+        );
+
+        let make_bar = |count: usize| -> alloc::string::String {
+            if count == 0 || max == 0 {
+                return alloc::string::String::new();
+            }
+            let units = ((count as u128 * total_units as u128).div_ceil(max as u128)) as usize;
+            let full = units / 8;
+            let rem = units % 8;
+            let mut bar = "█".repeat(full);
+            if rem > 0 {
+                let ch = match rem {
+                    1 => '▏',
+                    2 => '▎',
+                    3 => '▍',
+                    4 => '▌',
+                    5 => '▋',
+                    6 => '▊',
+                    7 => '▉',
+                    _ => unreachable!(),
+                };
+                bar.push(ch);
+            }
+            bar
+        };
+
+        for (i, &count) in self
+            .probe_length_by_bucket
+            .iter()
+            .take(HOP_RANGE)
+            .enumerate()
+        {
+            let label = alloc::format!("{:>2}", i + 1);
+            let bar = make_bar(count);
+            println!("{} | {} ({})", label, bar, count);
+        }
+
+        let of_count = self.probe_length_by_bucket[HOP_RANGE];
+        let of_bar = make_bar(of_count);
+        println!("OF | {} ({})", of_bar, of_count);
+
+        println!("Probe length by count (in-table entries):");
+        for (i, &count) in self
+            .probe_length_by_count
+            .iter()
+            .take(HOP_RANGE)
+            .enumerate()
+        {
+            let label = alloc::format!("{:>2}", i + 1);
+            let bar = make_bar(count);
+            println!("{} | {} ({})", label, bar, count);
+        }
+
+        let of_count = self.probe_length_by_count[HOP_RANGE];
+        let of_bar = make_bar(of_count);
+        println!("OF | {} ({})", of_bar, of_count);
+
+        println!("Bucket distribution (in-table entries):");
+        for (i, &count) in self.bucket_distribution.iter().enumerate() {
+            let label = alloc::format!("{:>2}", i);
+            let bar = make_bar(count);
+            println!("{} | {} ({})", label, bar, count);
+        }
     }
 }
 
@@ -890,7 +1010,9 @@ impl<V> HashTable<V> {
     /// `bucket + 16` does not exceed the bounds of the tags array.
     #[inline(always)]
     unsafe fn scan_tags(&self, bucket: usize, tag: u8) -> u16 {
-        if is_x86_feature_detected!("sse2") {
+        if (cfg!(target_arch = "x86") || cfg!(target_arch = "x86_64"))
+            && cfg!(target_feature = "sse2")
+        {
             // SAFETY: We have validated the bucket bounds, as per the requirements of
             // `scan_tags`.
             unsafe { self.scan_tags_sse2(bucket, tag) }
@@ -1170,7 +1292,9 @@ impl<V> HashTable<V> {
     unsafe fn find_next_unoccupied(&self, start: usize) -> Option<usize> {
         // SAFETY: start is validated to be within table bounds by caller
         unsafe {
-            if is_x86_feature_detected!("sse2") {
+            if (cfg!(target_arch = "x86") || cfg!(target_arch = "x86_64"))
+                && cfg!(target_feature = "sse2")
+            {
                 self.find_next_unoccupied_sse2(start)
             } else {
                 self.tags_ptr().as_ref()[start..]
@@ -1542,12 +1666,17 @@ impl<V> HashTable<V> {
     /// scanned to rule out a match, where the second vector counts how
     /// spatially dispersed the entries in the buckets are.
     #[cfg(test)]
-    pub fn probe_histogram(&self) -> (alloc::vec::Vec<usize>, alloc::vec::Vec<usize>) {
-        let mut hist = alloc::vec![0usize; HOP_RANGE + 1];
-        let mut dist_hist = alloc::vec![0usize; HOP_RANGE];
+    pub fn probe_histogram(&self) -> ProbeHistogram {
+        let mut probe_hist = ProbeHistogram {
+            populated: self.populated,
+            buckets: self.max_root_mask.wrapping_add(1) + HOP_RANGE,
+            probe_length_by_bucket: [0; HOP_RANGE + 1],
+            probe_length_by_count: [0; HOP_RANGE + 1],
+            bucket_distribution: [0; HOP_RANGE],
+        };
 
         if self.populated == 0 {
-            return (hist, dist_hist);
+            return probe_hist;
         }
 
         // SAFETY: All pointer/slice accesses obey table bounds; occupied slots
@@ -1556,25 +1685,33 @@ impl<V> HashTable<V> {
             for bucket in self.hopmap_ptr().as_ref().iter() {
                 let mut mask = bucket.candidates();
                 if mask != 0 {
-                    hist[mask.count_ones() as usize - 1] += bucket
+                    probe_hist.probe_length_by_bucket[mask.count_ones() as usize - 1] += bucket
                         .neighbors
                         .iter()
                         .copied()
                         .map(|n| usize::from(n > 0))
                         .sum::<usize>();
+                    probe_hist.probe_length_by_count[mask.count_ones() as usize - 1] += bucket
+                        .neighbors
+                        .iter()
+                        .copied()
+                        .map(|n| n as usize)
+                        .sum::<usize>();
 
                     while mask != 0 {
                         let n_index = mask.trailing_zeros() as usize;
                         mask ^= 1 << n_index;
-                        dist_hist[n_index] += bucket.neighbors[n_index] as usize;
+                        probe_hist.bucket_distribution[n_index] +=
+                            bucket.neighbors[n_index] as usize;
                     }
                 }
             }
 
-            hist[HOP_RANGE] += self.overflow.len();
+            probe_hist.probe_length_by_count[HOP_RANGE] = self.overflow.len();
+            probe_hist.probe_length_by_bucket[HOP_RANGE] = self.overflow.len();
         }
 
-        (hist, dist_hist)
+        probe_hist
     }
 
     /// Returns detailed performance and utilization statistics for debugging.
@@ -1620,77 +1757,6 @@ impl<V> HashTable<V> {
             total_bytes: self.layout.layout.size(),
             wasted_bytes: (total_slots - occupied_slots)
                 * (core::mem::size_of::<V>() + core::mem::size_of::<u64>()),
-        }
-    }
-
-    /// Pretty-prints the probe-length histogram horizontally using stdout.
-    ///
-    /// Test-only, requires the `std` feature. Produces a horizontal bar chart.
-    /// Each row corresponds to a probe-length bin (0..HOP_RANGE-1), plus an
-    /// "OF" row for overflows.
-    #[cfg(all(test, feature = "std"))]
-    pub fn print_probe_histogram(&self) {
-        let (hist, dist_hist) = self.probe_histogram();
-        let max = *hist
-            .iter()
-            .max()
-            .unwrap_or(&0)
-            .max(dist_hist.iter().max().unwrap_or(&0));
-        if max == 0 {
-            println!("probe histogram: empty");
-            return;
-        }
-
-        let max_bar = 60usize;
-        let total_units = max_bar * 8;
-        println!(
-            "probe histogram ({} entries, {}x16 slots):",
-            self.populated,
-            self.max_root_mask.wrapping_add(1) + HOP_RANGE
-        );
-
-        let make_bar = |count: usize| -> alloc::string::String {
-            if count == 0 || max == 0 {
-                return alloc::string::String::new();
-            }
-            let units = ((count as u128 * total_units as u128).div_ceil(max as u128)) as usize;
-            let full = units / 8;
-            let rem = units % 8;
-            let mut bar = "█".repeat(full);
-            if rem > 0 {
-                let ch = match rem {
-                    1 => '▏',
-                    2 => '▎',
-                    3 => '▍',
-                    4 => '▌',
-                    5 => '▋',
-                    6 => '▊',
-                    7 => '▉',
-                    _ => unreachable!(),
-                };
-                bar.push(ch);
-            }
-            bar
-        };
-
-        for (i, &count) in hist.iter().take(HOP_RANGE).enumerate() {
-            let label = alloc::format!("{:>2}", i + 1);
-            let bar = make_bar(count);
-            println!("{} | {} ({})", label, bar, count);
-        }
-
-        let of_count = hist[HOP_RANGE];
-        let of_bar = make_bar(of_count);
-        println!("OF | {} ({})", of_bar, of_count);
-
-        let dist_max = *dist_hist.iter().max().unwrap_or(&0);
-        if dist_max > 0 {
-            println!("distance histogram (in-table entries):");
-            for (i, &count) in dist_hist.iter().enumerate() {
-                let label = alloc::format!("{:>2}", i);
-                let bar = make_bar(count);
-                println!("{} | {} ({})", label, bar, count);
-            }
         }
     }
 }
@@ -2528,7 +2594,7 @@ mod tests {
         }
 
         println!("Full table stats:");
-        table.print_probe_histogram();
+        table.probe_histogram().print();
         table.debug_stats().print();
 
         table.clear();
@@ -2546,7 +2612,7 @@ mod tests {
         }
 
         println!("\nHalf-full table stats:");
-        table.print_probe_histogram();
+        table.probe_histogram().print();
         table.debug_stats().print();
     }
 

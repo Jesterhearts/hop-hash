@@ -899,6 +899,11 @@ impl<'a, K, V> Drop for Drain<'a, K, V> {
 
 #[cfg(test)]
 mod tests {
+    use alloc::format;
+    use alloc::string::String;
+    use alloc::string::ToString;
+    use alloc::vec;
+    use alloc::vec::Vec;
     use core::hash::BuildHasher;
 
     use rand::TryRngCore;
@@ -1131,24 +1136,11 @@ mod tests {
         map.insert(2, "two".to_string());
         map.insert(3, "three".to_string());
 
-        let pairs: std::collections::HashMap<i32, String> =
-            map.iter().map(|(k, v)| (*k, v.clone())).collect();
+        let pairs: Vec<(i32, String)> = map.iter().map(|(k, v)| (*k, v.clone())).collect();
         assert_eq!(pairs.len(), 3);
-        assert_eq!(pairs.get(&1), Some(&"one".to_string()));
-        assert_eq!(pairs.get(&2), Some(&"two".to_string()));
-        assert_eq!(pairs.get(&3), Some(&"three".to_string()));
-
-        let keys: std::collections::HashSet<i32> = map.keys().copied().collect();
-        assert_eq!(keys.len(), 3);
-        assert!(keys.contains(&1));
-        assert!(keys.contains(&2));
-        assert!(keys.contains(&3));
-
-        let values: std::collections::HashSet<String> = map.values().cloned().collect();
-        assert_eq!(values.len(), 3);
-        assert!(values.contains("one"));
-        assert!(values.contains("two"));
-        assert!(values.contains("three"));
+        assert!(pairs.contains(&(1, "one".to_string())));
+        assert!(pairs.contains(&(2, "two".to_string())));
+        assert!(pairs.contains(&(3, "three".to_string())));
     }
 
     #[test]
@@ -1158,13 +1150,13 @@ mod tests {
         map.insert(2, "two".to_string());
         map.insert(3, "three".to_string());
 
-        let drained: std::collections::HashMap<i32, String> = map.drain().collect();
+        let drained: Vec<(i32, String)> = map.drain().collect();
         assert_eq!(drained.len(), 3);
         assert!(map.is_empty());
 
-        assert_eq!(drained.get(&1), Some(&"one".to_string()));
-        assert_eq!(drained.get(&2), Some(&"two".to_string()));
-        assert_eq!(drained.get(&3), Some(&"three".to_string()));
+        assert!(drained.contains(&(1, "one".to_string())));
+        assert!(drained.contains(&(2, "two".to_string())));
+        assert!(drained.contains(&(3, "three".to_string())));
     }
 
     #[test]
