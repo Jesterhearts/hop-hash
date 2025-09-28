@@ -1,3 +1,97 @@
+//! A high-performance hash table using 16-way hopscotch hashing.
+//!
+//! Hopscotch hashing is a technique which attempts to place an item within a
+//! fixed distance of its home bucket during insertion. If this fails, an empty
+//! spot is located in the table and bubbled backwards by repeatedly identifying
+//! an element that can move into the empty slot without leaving its
+//! neighborhood and swapping it with the empty slot until the empty slot is in
+//! the fixed range. If bubbling fails (typically due to very high load), the
+//! table is resized and insertion re-attempted.  This has the nice effect that
+//! lookups and removals have constant-time worst case behavior (and insertion
+//! has amortized constant time behavior), rather than O(N). This table
+//! implementation does include an overflow mechanism which could lead to O(N)
+//! behavior, but unless you have a degenerate hash function the odds of ever
+//! seeing this used are so astronomically low as to be effectively zero.
+//! Overflow requires > 256 items to all hash to the same root bucket, and
+//! survive resizing, which means they would essentially need to have the same
+//! hash.
+//!
+//! [`HashTable<V>`] stores values of type `V` and provides fast insertion,
+//! lookup, and removal operations. This is a fairly low-level structure that
+//! requires you to provide both the hash value and an equality predicate for
+//! each operation. Prefer using the [`HashMap<K, V>`] or [`HashSet<V>`]
+//! wrappers for a more convenient key-value or set interface unless you are
+//! implementing your own Map or Set structure.
+//!
+//! ## Design
+//!
+//! This table is designed around 16-byte sse2 operations to facilitate
+//! performance. The table is a contiguous sequence of 16-entry buckets. An
+//! item's hash maps it to a "root" bucket. For each root, a corresponding
+//! `HopInfo` struct is allocated which tracks the occupancy of the 16 neighbor
+//! buckets starting at the root. Each bucket also has a corresponding 16-byte
+//! tag array which tracks a 7-bit fingerprint of the hash for each entry in the
+//! bucket.
+//!
+//! Each neighborhood byte tracks how many entries in that neighbor slot are
+//! occupied, allowing for up to 16 entries per neighbor slot. This allows for
+//! fast scans to see which neighbors need to be probed during lookups, as the
+//! algorithm knows to check all buckets with at least one neighbor. It might be
+//! possible to get more precise bucket scans by tracking a 16-bit mask of which
+//! bucket slots are occupied per neighbor, but this would increase overhead to
+//! 3 bytes per entry and prevent identifying scan targets with a cmp/mask
+//! operation pair. Ultimately, it seems unlikely to provide performance gains
+//! as intra-bucket tag collisions seem rare in practice (eliminating these
+//! false positives is the major benefit you'd see from this scheme) and
+//! identifying which neighbors to scan is fairly hot in profiles, so slowing
+//! this down at all is likely to hurt rather than help performance.
+//!
+//! Tags are derived from the top 7-bits of the hash value, with the sign bit
+//! reserved to mark empty slots. This allows the use of just a single load/mask
+//! operation to identify empty slots when scanning for an empty slot during
+//! insertion, which is a hot path in profiles. It is important that tags are
+//! not derived from the lower bits of the hash, as that causes them to be
+//! correlated with their location in the table, leading to significantly more
+//! tag collisions and greatly increased scan times.
+//!
+//! For bad hash functions (e.g. one that only provides a 16-bit hash), this
+//! can every tagdto evaluate to zero, but using bit-mixing over a simple
+//! shift hurts benchmarks for the far more common case of a 64-bit hash value.
+//!
+//! All data is stored in one contiguous type-erased allocation.
+//! `[ HopInfo | Tags | Values ]`
+//!
+//! It's possible to combine all of the items into one single array of a struct
+//! type which combines a `HopInfo`, 16 tags, and 16 `MaybeUninit<V>` entries,
+//! but in testing this seems to signficantly hurt iteration performance without
+//! an offsetting increase in other benchmarks. In addition, storing the items
+//! in separate allocations seems to harm performance considerably, although I
+//! don't have a good explanation for why yet. It's possible that it's simply
+//! overhead from how the items were being initialized, and further testing
+//! might indicate that it's safe to split out the allocations. I'm not sure if
+//! this would actually simplify the code much, though.
+//!
+//! Sizes are always rounded up to the next power-of-two for the extent of the
+//! root buckets to allow for simple & masking operations to compute root
+//! buckets based on hashes. Using this over modulo has a significant
+//! performance impact.
+//!
+//! An additional pad of `HOP_RANGE` buckets is added to the end of the table to
+//! allow the final neighborhood to span a full 16 buckets without wrapping.
+//! Adding wrapping would save the memory allocated to this pad (`256 *
+//! size_of(V)`), but would complicate the code significantly, particularly
+//! during bubbling.
+//!
+//! The overflow vector is strictly a safety measure to avoid OOM in the face of
+//! pathological hash inputs. Without this measure, pathological inputs would
+//! constantly fill up the fixed neighborhood -> trigger a resize -> fill up the
+//! neighborhood -> trigger a resize loop, leading to OOM. With the overflow,
+//! this is avoided at the cost of O(N) lookup times and degraded performance,
+//! which seems like a reasonable trade-off.
+//!
+//! [`HashMap<K, V>`]: crate::hash_map::HashMap
+//! [`HashSet<V>`]: crate::hash_set::HashSet
+
 use alloc::alloc::handle_alloc_error;
 use alloc::vec::Vec;
 use core::alloc::Layout;
@@ -31,16 +125,16 @@ fn target_load_factor_inverse(capacity: usize) -> usize {
     (capacity as f32 / TARGET_LOAD) as usize
 }
 
+/// Prefetches data into the cache.
+///
+/// # Safety
+///
+/// The caller must ensure that `ptr` points to a memory location that is safe
+/// to read from. While `_mm_prefetch` might not fault on invalid addresses,
+/// the behavior is undefined if the address is not valid for reads.
 #[inline(always)]
-fn prefetch<T>(ptr: *const T) {
-    #[cfg(all(target_arch = "x86_64", target_feature = "sse"))]
-    unsafe {
-        use core::arch::x86_64::*;
-        _mm_prefetch(ptr as *const i8, _MM_HINT_T0);
-    }
-    #[cfg(all(target_arch = "x86", target_feature = "sse"))]
-    {
-        use core::arch::x86::*;
+unsafe fn prefetch<T>(ptr: *const T) {
+    if (cfg!(target_arch = "x86") || cfg!(target_arch = "x86_64")) && cfg!(target_feature = "sse") {
         unsafe {
             _mm_prefetch(ptr as *const i8, _MM_HINT_T0);
         }
@@ -79,10 +173,10 @@ fn hashtag(tag: u64) -> u8 {
 }
 
 /// Search for a movable index in the bubble range
-///g
+///
 /// # Safety
-/// - `values` must point to a slice of `MaybeUninit<V>` with length strictly
-///   greater than `empty_idx`.
+/// - `values` must point to a slice of `MaybeUninit<V>` with length greater
+///   than or equal to `empty_idx`.
 /// - The range `[bubble_base, empty_idx)` must be initialized.
 /// - Caller must ensure `0 <= bubble_base < empty_idx <= values.len()`.
 /// - `max_root_mask` must match the table’s current mask; roots are
@@ -96,11 +190,10 @@ unsafe fn find_next_movable_index<V>(
     rehash: &dyn Fn(&V) -> u64,
 ) -> Option<(usize, u64)> {
     for idx in bubble_base..empty_idx {
-        // SAFETY: We have validated that `idx` is within the `bubble_base..empty_idx`
-        // range. The caller guarantees `empty_idx <= values.len()`, ensuring
-        // `get_unchecked` is safe. Additionally, the caller ensures elements in
-        // `[bubble_base, empty_idx)` are initialized, making `assume_init_read`
-        // safe.
+        // SAFETY: The caller guarantees that `idx` is within `bubble_base..empty_idx`
+        // and that `empty_idx` is within the bounds of `values`, making
+        // `get_unchecked` safe. The caller also ensures that elements in this range
+        // are initialized, making `assume_init_ref` safe.
         unsafe {
             let hash = rehash(values.get_unchecked(idx).assume_init_ref());
             let hopmap_index = (hash as usize & max_root_mask) * LANES;
@@ -490,8 +583,11 @@ impl<V> Debug for HashTable<V> {
                 .finish();
         }
 
-        // SAFETY: Valid pointers created during initialization and capacity > 0 when
-        // accessed
+        // SAFETY: The `unsafe` block is safe because the `if self.is_empty()`
+        // check ensures that this code only runs on a non-empty (and therefore
+        // initialized) table. An initialized table guarantees that `self.alloc`
+        // points to a valid allocation matching `self.layout`, making the calls to
+        // `hopmap_ptr` and `tags_ptr` safe.
         unsafe {
             f.debug_struct("HashTable")
                 .field(
@@ -575,8 +671,15 @@ where
             _phantom: core::marker::PhantomData,
         };
 
-        // SAFETY: We have ensured that both tables have valid allocations and
-        // the same capacity.
+        // SAFETY: The new table has the same capacity and layout as the source
+        // table. We iterate through the tags, and for each occupied slot, we clone
+        // the value. This is safe because:
+        // 1. `get_unchecked` is safe as we iterate up to `src_tags.len()`, which is
+        //    within the bounds of all allocated slices.
+        // 2. `assume_init_ref` is safe because a non-`EMPTY` tag guarantees that the
+        //    corresponding bucket is initialized.
+        // 3. `write` to `dst_buckets` is safe because the destination is uninitialized
+        //    and within bounds.
         unsafe {
             let src_buckets = self.buckets_ptr().as_ref();
             let dst_buckets = new_table.buckets_ptr().as_mut();
@@ -667,7 +770,11 @@ impl<V> HashTable<V> {
     }
 
     fn hopmap_ptr(&self) -> NonNull<[HopInfo]> {
-        // SAFETY: Allocation is valid and properly sized for the hopmap slice
+        // SAFETY: This is safe because `self.alloc` is guaranteed to point to a
+        // valid allocation with a layout described by `self.layout`. The offset
+        // `self.layout.hopmap_offset` and the length `self.max_root_mask + 1` are
+        // derived from the capacity and are guaranteed to be within the bounds of
+        // the allocated memory block.
         unsafe {
             NonNull::slice_from_raw_parts(
                 self.alloc.add(self.layout.hopmap_offset).cast(),
@@ -677,7 +784,11 @@ impl<V> HashTable<V> {
     }
 
     fn buckets_ptr(&self) -> NonNull<[MaybeUninit<V>]> {
-        // SAFETY: Allocation is valid and properly sized for the buckets slice
+        // SAFETY: This is safe because `self.alloc` is guaranteed to point to a
+        // valid allocation with a layout described by `self.layout`. The offset
+        // `self.layout.buckets_offset` and the calculated length are derived from
+        // the capacity and are guaranteed to be within the bounds of the allocated
+        // memory block.
         unsafe {
             NonNull::slice_from_raw_parts(
                 self.alloc.add(self.layout.buckets_offset).cast(),
@@ -691,7 +802,11 @@ impl<V> HashTable<V> {
     }
 
     fn tags_ptr(&self) -> NonNull<[u8]> {
-        // SAFETY: Allocation is valid and properly sized for the tags slice
+        // SAFETY: This is safe because `self.alloc` is guaranteed to point to a
+        // valid allocation with a layout described by `self.layout`. The offset
+        // `self.layout.tags_offset` and the calculated length are derived from
+        // the capacity and are guaranteed to be within the bounds of the allocated
+        // memory block.
         unsafe {
             NonNull::slice_from_raw_parts(
                 self.alloc.add(self.layout.tags_offset).cast(),
@@ -1510,8 +1625,20 @@ impl<V> HashTable<V> {
             )
         };
 
-        // SAFETY: Moving initialized values from old table, pointers valid from
-        // allocation
+        // SAFETY: This block moves all initialized values from the old allocation to
+        // the new one. The safety of this operation relies on the following:
+        // - The old allocation is valid and contains `self.populated` initialized
+        //   elements, which are correctly identified by the `old_emptymap` (tags).
+        // - We iterate through the old tags. For each non-empty tag, we read the value
+        //   with `assume_init_read`, which is safe because the tag marks it as
+        //   initialized.
+        // - Each value is then re-inserted into the new table. The insertion logic,
+        //   including bubbling, involves `unsafe` operations (`get_unchecked`, pointer
+        //   arithmetic, calls to other `unsafe fn`). These are safe because all
+        //   accesses are bounded by the new table's capacity, and the logic correctly
+        //   maintains the hopscotch invariants.
+        // - After moving, the old allocation is deallocated without dropping the
+        //   moved-out values, which is correct as ownership has been transferred.
         unsafe {
             // Ownership note: We move values (V) out of the old allocation into the new
             // one. The old allocation is then deallocated without running destructors for
@@ -1683,8 +1810,10 @@ impl<V> HashTable<V> {
             return probe_hist;
         }
 
-        // SAFETY: All pointer/slice accesses obey table bounds; occupied slots
-        // are identified by tags
+        // SAFETY: The call to `hopmap_ptr().as_ref()` is unsafe, but is safe here
+        // because `self` is a valid `HashTable`. An initialized table guarantees
+        // that `hopmap_ptr()` returns a valid pointer and length for the hopmap slice.
+        // The rest of the operations are safe as they operate on the valid slice.
         unsafe {
             for bucket in self.hopmap_ptr().as_ref().iter() {
                 let mut mask = bucket.candidates();
@@ -1731,7 +1860,10 @@ impl<V> HashTable<V> {
         let mut occupied_slots = 0;
 
         if total_slots > 0 {
-            // SAFETY: Valid allocation and bounds checked
+            // SAFETY: The call to the `unsafe` function `is_occupied` is safe here
+            // because we are iterating from `0` to `total_slots`, which is the
+            // exact size of the tags array. This ensures that the index `i` is
+            // always within bounds.
             unsafe {
                 for i in 0..total_slots {
                     if self.is_occupied(i) {
@@ -1874,12 +2006,13 @@ impl<'a, V> VacantEntry<'a, V> {
             return self.insert_overflow(value);
         }
 
-        // SAFETY: absolute_index validated during vacant lookup, n_index < HOP_RANGE
+        // SAFETY: A `VacantEntry` is only constructed by `do_vacant_lookup` with a
+        // valid, unoccupied `n_index` that is guaranteed to be in the hop-neighborhood.
+        // This ensures that `neighbor` is a valid index (< HOP_RANGE) and that the
+        // `target_index` is a valid, unoccupied slot within the table's bounds.
+        // Therefore, the `unsafe` operations (`set`, `set_occupied`,
+        // `get_unchecked_mut`, and `write`) are safe.
         unsafe {
-            // SAFETY: `self.n_index` is an offset from the root bucket, guaranteed
-            // to be in the hop-neighborhood by `do_vacant_lookup`. Thus, `neighbor`
-            // is a valid index (< HOP_RANGE), and `target_index` is a valid,
-            // unoccupied slot within bounds.
             let neighbor = self.n_index / LANES;
             debug_assert!(neighbor < HOP_RANGE);
             self.table
@@ -1925,11 +2058,16 @@ impl<'a, V> OccupiedEntry<'a, V> {
     /// Gets a reference to the value in the entry.
     pub fn get(&self) -> &V {
         if let Some(overflow_index) = self.overflow_index {
-            // SAFETY: overflow_index validated when Some, within overflow vec bounds
-            return unsafe { self.table.overflow.get_unchecked(overflow_index) };
+            return &self.table.overflow[overflow_index];
         }
 
-        // SAFETY: absolute_index validated during lookup, bucket confirmed initialized
+        // SAFETY: An `OccupiedEntry` for an in-table element is only created after
+        // `search_neighborhood` finds a valid, occupied slot. This guarantees that:
+        // 1. The calculated absolute index (`self.root_index * LANES + self.n_index`)
+        //    is within the bounds of the `buckets` array.
+        // 2. The slot is occupied, meaning the `MaybeUninit<V>` contains an initialized
+        //    value.
+        // Therefore, `get_unchecked` and `assume_init_ref` are safe.
         unsafe {
             self.table
                 .buckets_ptr()
@@ -1942,11 +2080,16 @@ impl<'a, V> OccupiedEntry<'a, V> {
     /// Gets a mutable reference to the value in the entry.
     pub fn get_mut(&mut self) -> &mut V {
         if let Some(overflow_index) = self.overflow_index {
-            // SAFETY: overflow_index validated when Some, within overflow vec bounds
-            return unsafe { self.table.overflow.get_unchecked_mut(overflow_index) };
+            return &mut self.table.overflow[overflow_index];
         }
 
-        // SAFETY: absolute_index validated during lookup, bucket confirmed initialized
+        // SAFETY: An `OccupiedEntry` for an in-table element is only created after
+        // `search_neighborhood` finds a valid, occupied slot. This guarantees that:
+        // 1. The calculated absolute index (`self.root_index * LANES + self.n_index`)
+        //    is within the bounds of the `buckets` array.
+        // 2. The slot is occupied, meaning the `MaybeUninit<V>` contains an initialized
+        //    value.
+        // Therefore, `get_unchecked_mut` and `assume_init_mut` are safe.
         unsafe {
             self.table
                 .buckets_ptr()
@@ -1960,11 +2103,16 @@ impl<'a, V> OccupiedEntry<'a, V> {
     /// lifetime of the entry.
     pub fn into_mut(self) -> &'a mut V {
         if let Some(overflow_index) = self.overflow_index {
-            // SAFETY: overflow_index validated when Some, within overflow vec bounds
-            return unsafe { self.table.overflow.get_unchecked_mut(overflow_index) };
+            return &mut self.table.overflow[overflow_index];
         }
 
-        // SAFETY: absolute_index validated during lookup, bucket confirmed initialized
+        // SAFETY: An `OccupiedEntry` for an in-table element is only created after
+        // `search_neighborhood` finds a valid, occupied slot. This guarantees that:
+        // 1. The calculated absolute index (`self.root_index * LANES + self.n_index`)
+        //    is within the bounds of the `buckets` array.
+        // 2. The slot is occupied, meaning the `MaybeUninit<V>` contains an initialized
+        //    value.
+        // Therefore, `get_unchecked_mut` and `assume_init_mut` are safe.
         unsafe {
             self.table
                 .buckets_ptr()
@@ -1983,7 +2131,11 @@ impl<'a, V> OccupiedEntry<'a, V> {
             return value;
         }
 
-        // SAFETY: absolute_index validated during lookup, value confirmed initialized
+        // SAFETY: This is safe for the same reasons as `get()`: the entry is
+        // guaranteed to point to a valid, initialized element. We can therefore
+        // safely read the value with `assume_init_read`. The subsequent calls to
+        // `clear` and `clear_occupied` are also safe because the indices are
+        // guaranteed to be valid by the invariants of `OccupiedEntry`.
         unsafe {
             let bucket_mut = self
                 .table
@@ -2025,12 +2177,14 @@ impl<'a, V> Iterator for Iter<'a, V> {
     type Item = &'a V;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.table.populated == 0 {
-            return None;
-        }
+        // SAFETY: The `unsafe` block is safe because we are iterating through the
+        // table's slots within the valid bounds (`0..total_slots`).
+        // - `is_occupied` is safe to call because `self.bucket_index` is always less
+        //   than `total_slots`.
+        // - `get_unchecked` is safe for the same reason.
+        // - `assume_init_ref` is safe because we only call it after `is_occupied`
+        //   returns true, which guarantees the slot contains an initialized value.
 
-        // SAFETY: slot_index bounds checked, values confirmed initialized by occupied
-        // tags
         unsafe {
             let total_slots = (self.table.max_root_mask.wrapping_add(1) + HOP_RANGE) * LANES;
             while self.bucket_index < total_slots {
@@ -2073,6 +2227,11 @@ impl<V> Drop for Drain<'_, V> {
     fn drop(&mut self) {
         for _ in &mut *self {}
 
+        // SAFETY: The `for` loop ensures that the iterator is fully consumed,
+        // which clears all occupied tags. This `unsafe` block then zeroes out the
+        // `hopmap` metadata region. This is safe because the table's allocation is
+        // still valid, and we are writing within the bounds of the `hopmap` region
+        // as defined by the layout.
         unsafe {
             core::ptr::write_bytes(
                 self.table
@@ -2080,7 +2239,7 @@ impl<V> Drop for Drain<'_, V> {
                     .add(self.table.layout.hopmap_offset)
                     .as_ptr(),
                 0,
-                self.table.layout.tags_offset,
+                self.table.layout.tags_offset - self.table.layout.hopmap_offset,
             );
         }
     }
@@ -2094,8 +2253,13 @@ impl<'a, V> Iterator for Drain<'a, V> {
             return None;
         }
 
-        // SAFETY: slot_index bounds checked, values confirmed initialized by occupied
-        // tags
+        // SAFETY: The `unsafe` block is safe because we are iterating through the
+        // table's slots within the valid bounds (`0..total_slots`).
+        // - `is_occupied` and `clear_occupied` are safe because `self.bucket_index` is
+        //   always less than `total_slots`.
+        // - `get_unchecked` is safe for the same reason.
+        // - `assume_init_read` is safe because we only call it after `is_occupied`
+        //   returns true, and we take ownership of the value.
         unsafe {
             let total_slots = (self.table.max_root_mask.wrapping_add(1) + HOP_RANGE) * LANES;
             while self.bucket_index < total_slots {
