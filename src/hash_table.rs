@@ -55,7 +55,7 @@
 //! tag collisions and greatly increased scan times.
 //!
 //! For bad hash functions (e.g. one that only provides a 16-bit hash), this
-//! can every tagdto evaluate to zero, but using bit-mixing over a simple
+//! can cause every tag to evaluate to zero, but using bit-mixing over a simple
 //! shift hurts benchmarks for the far more common case of a 64-bit hash value.
 //!
 //! All data is stored in one contiguous type-erased allocation.
@@ -1777,25 +1777,14 @@ impl<V> HashTable<V> {
         self.max_pop
     }
 
-    /// Computes a histogram of probe lengths for the current table state.
+    /// Computes a histogram of probe lengths and bucket distribution for the
+    /// current table state.
+    ///
+    /// This method is intended for debugging and performance analysis. It returns
+    /// a [`ProbeHistogram`] struct containing detailed statistics about probe
+    /// lengths and how entries are distributed relative to their ideal buckets.
     ///
     /// Test-only: compiled only with `cfg(test)`.
-    ///
-    /// Definition of probe length used here:
-    /// - For each occupied slot in the table, we compute the distance from its
-    ///   root bucket as `n_index = (absolute_index - root*16) / 16`, which is
-    ///   always in `0..HOP_RANGE` for in-table entries. This corresponds to the
-    ///   hop-neighborhood index tracked by the hopmap.
-    /// - All overflowed entries (stored in the overflow vector) are counted in
-    ///   an extra bin at index `HOP_RANGE`.
-    ///
-    /// Returns a vector of length `HOP_RANGE + 1` where indices
-    /// `0..HOP_RANGE-1` represent in-table probe lengths, and index
-    /// `HOP_RANGE` represents overflow entries, and a second vector of the
-    /// same length representing the total number of distance from the root for
-    /// each bin. The first vector counts how many buckets will have to be
-    /// scanned to rule out a match, where the second vector counts how
-    /// spatially dispersed the entries in the buckets are.
     #[cfg(test)]
     pub fn probe_histogram(&self) -> ProbeHistogram {
         let mut probe_hist = ProbeHistogram {
