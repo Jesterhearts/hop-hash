@@ -41,7 +41,7 @@
 //! bucket slots are occupied per neighbor, but this would increase overhead to
 //! 3 bytes per entry and prevent identifying scan targets with a cmp/mask
 //! operation pair. Ultimately, it seems unlikely to provide performance gains
-//! as intra-bucket tag collisions seem rare in practice (eliminating these
+//! as intra-bucket tag collisions are not common enough (eliminating these
 //! false positives is the major benefit you'd see from this scheme) and
 //! identifying which neighbors to scan is fairly hot in profiles, so slowing
 //! this down at all is likely to hurt rather than help performance.
