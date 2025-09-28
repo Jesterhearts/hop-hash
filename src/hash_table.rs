@@ -116,6 +116,7 @@
 //! [`HashSet<V>`]: crate::hash_set::HashSet
 
 use alloc::alloc::handle_alloc_error;
+use alloc::boxed::Box;
 use alloc::vec::Vec;
 use core::alloc::Layout;
 #[cfg(target_arch = "x86")]
@@ -862,8 +863,52 @@ impl<V> HashTable<V> {
     ///
     /// After calling `drain()`, the table will be empty. The iterator yields
     /// owned values in an arbitrary order.
+    ///
+    /// Calling `mem::forget` on the iterator will leak all unyielded values in
+    /// the table without dropping them. This will cause memory to be leaked.
     pub fn drain(&mut self) -> Drain<'_, V> {
+        let total_slots = if self.layout.layout.size() == 0 {
+            0
+        } else {
+            (self.max_root_mask.wrapping_add(1) + HOP_RANGE) * LANES
+        };
+
+        if total_slots == 0 {
+            return Drain {
+                total_slots,
+                occupied: Box::new([]),
+                overflow: std::mem::take(&mut self.overflow),
+                table: self,
+                bucket_index: 0,
+            };
+        }
+
+        let old_populated = self.tags_ptr();
+        let mut occupied = Box::new_uninit_slice(old_populated.len());
+
+        let occupied = unsafe {
+            core::ptr::copy_nonoverlapping(
+                old_populated.as_ref().as_ptr(),
+                occupied.as_mut_ptr().cast(),
+                old_populated.len(),
+            );
+
+            core::ptr::write_bytes(self.alloc.as_ptr(), 0x0, self.layout.tags_offset);
+            core::ptr::write_bytes(
+                self.alloc.as_ptr().add(self.layout.tags_offset),
+                EMPTY,
+                self.layout.buckets_offset - self.layout.tags_offset,
+            );
+
+            occupied.assume_init()
+        };
+
+        self.populated = 0;
+
         Drain {
+            total_slots,
+            occupied,
+            overflow: std::mem::take(&mut self.overflow),
             table: self,
             bucket_index: 0,
         }
@@ -2240,55 +2285,34 @@ impl<'a, V> Iterator for Iter<'a, V> {
 ///
 /// [`drain`]: HashTable::drain
 pub struct Drain<'a, V> {
+    occupied: Box<[u8]>,
+    total_slots: usize,
     table: &'a mut HashTable<V>,
+    overflow: Vec<V>,
     bucket_index: usize,
 }
 
 impl<V> Drop for Drain<'_, V> {
     fn drop(&mut self) {
         for _ in &mut *self {}
-
-        // SAFETY: The `for` loop ensures that the iterator is fully consumed,
-        // which clears all occupied tags. This `unsafe` block then zeroes out the
-        // `hopmap` metadata region. This is safe because the table's allocation is
-        // still valid, and we are writing within the bounds of the `hopmap` region
-        // as defined by the layout.
-        unsafe {
-            core::ptr::write_bytes(
-                self.table
-                    .alloc
-                    .add(self.table.layout.hopmap_offset)
-                    .as_ptr(),
-                0,
-                self.table.layout.tags_offset - self.table.layout.hopmap_offset,
-            );
-        }
     }
 }
 
-impl<'a, V> Iterator for Drain<'a, V> {
+impl<V> Iterator for Drain<'_, V> {
     type Item = V;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.table.is_empty() {
-            return None;
-        }
-
         // SAFETY: The `unsafe` block is safe because we are iterating through the
         // table's slots within the valid bounds (`0..total_slots`).
-        // - We guarded against an empty table at the start of `next()`.
-        // - `is_occupied` and `clear_occupied` are safe because `self.bucket_index` is
-        //   always less than `total_slots`.
-        // - `get_unchecked` is safe for the same reason.
+        // - total_slots is initialized to zero if the table is empty
+        // - occupied.get_unchecked is safe because `self.bucket_index` is always less
+        //   than `total_slots`.
+        // - buckets_ptr.`get_unchecked` is safe for the same reason.
         // - `assume_init_read` is safe because we only call it after `is_occupied`
         //   returns true, and we take ownership of the value.
         unsafe {
-            let total_slots = (self.table.max_root_mask.wrapping_add(1) + HOP_RANGE) * LANES;
-            while self.bucket_index < total_slots {
-                if self.table.is_occupied(self.bucket_index) {
-                    self.table.populated -= 1;
-
-                    self.table.clear_occupied(self.bucket_index);
+            while self.bucket_index < self.total_slots {
+                if *self.occupied.get_unchecked(self.bucket_index) != EMPTY {
                     let bucket = self
                         .table
                         .buckets_ptr()
@@ -2301,9 +2325,8 @@ impl<'a, V> Iterator for Drain<'a, V> {
                 self.bucket_index += 1;
             }
 
-            if !self.table.overflow.is_empty() {
-                self.table.populated -= 1;
-                let value = self.table.overflow.pop().unwrap();
+            if !self.overflow.is_empty() {
+                let value = self.overflow.pop().unwrap();
                 return Some(value);
             }
 
@@ -3074,7 +3097,6 @@ mod tests {
         let state = HashState::default();
         let mut table: HashTable<Item> = HashTable::with_capacity(0);
 
-        // Add items gradually and call shrink_to_fit to get to optimal size
         for i in 0..50 {
             let hash = hash_key(&state, i);
             table
@@ -3085,18 +3107,15 @@ mod tests {
                 });
         }
 
-        // First shrink to get to optimal size
         table.shrink_to_fit(|k| hash_key(&state, k.key));
         let optimal_capacity = table.capacity();
 
-        // Now shrink_to_fit should not change the capacity
         table.shrink_to_fit(|k| hash_key(&state, k.key));
         let capacity_after_second_shrink = table.capacity();
 
         assert_eq!(table.len(), 50);
         assert_eq!(optimal_capacity, capacity_after_second_shrink);
 
-        // Verify all items are still there
         for i in 0..50 {
             let hash = hash_key(&state, i);
             let found = table.find(hash, |v| v.key == i);
@@ -3139,5 +3158,173 @@ mod tests {
         let removed = table.remove(new_hash, |v| v.key == 999);
         assert!(removed.is_some());
         assert_eq!(table.len(), 100);
+    }
+
+    #[test]
+    fn miri_drain_with_overflow_must_not_lose_elements() {
+        let mut table = HashTable::<Box<u32>>::with_capacity(16);
+
+        let total_items: u32 = 260;
+        for i in 0..total_items {
+            let value = Box::new(i);
+
+            table.entry(0, |v| **v == i, |_| 0).or_insert(value);
+        }
+
+        assert_eq!(table.len(), total_items as usize);
+
+        assert!(!table.overflow.is_empty(), "Expected items in overflow");
+
+        let mut drained_items = table.drain().map(|v| *v).collect::<Vec<_>>();
+        drained_items.sort();
+
+        let expected_items = (0..total_items).collect::<Vec<_>>();
+
+        assert_eq!(
+            drained_items.len(),
+            total_items as usize,
+            "Drain should return all items"
+        );
+        assert_eq!(
+            drained_items, expected_items,
+            "Drained items should match inserted items"
+        );
+
+        assert!(table.is_empty(), "Table should be empty after drain");
+        assert_eq!(table.len(), 0, "Table length should be 0 after drain");
+    }
+
+    #[test]
+    fn miri_iter_over_table_with_overflow() {
+        let mut table = HashTable::<Box<u32>>::with_capacity(16);
+
+        let total_items: u32 = 260;
+        for i in 0..total_items {
+            let value = Box::new(i);
+            table.entry(0, |v| **v == i, |_| 0).or_insert(value);
+        }
+
+        assert_eq!(table.len(), total_items as usize);
+        assert!(!table.overflow.is_empty(), "Expected items in overflow");
+
+        let mut items = table.iter().map(|v| **v).collect::<Vec<_>>();
+        items.sort();
+
+        let expected_items = (0..total_items).collect::<Vec<_>>();
+
+        assert_eq!(items, expected_items, "Iter should visit all items");
+    }
+
+    #[test]
+    fn comprehensive_full_drain_with_reuse() {
+        let state = HashState::default();
+        let mut table: HashTable<Item> = HashTable::with_capacity(0);
+
+        for k in 0..8u64 {
+            let hash = hash_key(&state, k);
+            table
+                .entry(hash, |v| v.key == k, |v| hash_key(&state, v.key))
+                .or_insert(Item {
+                    key: k,
+                    value: k as i32,
+                });
+        }
+
+        assert_eq!(table.len(), 8);
+
+        let drained: Vec<Item> = table.drain().collect();
+        assert_eq!(drained.len(), 8);
+        assert_eq!(table.len(), 0);
+        assert!(table.is_empty());
+
+        let drained_keys: std::collections::HashSet<u64> =
+            drained.iter().map(|item| item.key).collect();
+        for k in 0..8u64 {
+            assert!(drained_keys.contains(&k), "Should have drained key {}", k);
+        }
+
+        for k in 20..25u64 {
+            let hash = hash_key(&state, k);
+            table
+                .entry(hash, |v| v.key == k, |v| hash_key(&state, v.key))
+                .or_insert(Item {
+                    key: k,
+                    value: (k as i32) + 100,
+                });
+        }
+
+        assert_eq!(table.len(), 5);
+        assert!(!table.is_empty());
+
+        for k in 20..25u64 {
+            let hash = hash_key(&state, k);
+            let found = table.find(hash, |v| v.key == k);
+            assert!(found.is_some(), "Should find new key {}", k);
+            assert_eq!(found.unwrap().value, (k as i32) + 100);
+        }
+
+        for k in 0..8u64 {
+            let hash = hash_key(&state, k);
+            assert!(
+                table.find(hash, |v| v.key == k).is_none(),
+                "Should not find old key {}",
+                k
+            );
+        }
+    }
+
+    #[test]
+    fn comprehensive_drain_edge_cases() {
+        let state = HashState::default();
+
+        {
+            let mut empty_table: HashTable<Item> = HashTable::with_capacity(0);
+            let drained: Vec<Item> = empty_table.drain().collect();
+            assert_eq!(drained.len(), 0);
+            assert_eq!(empty_table.len(), 0);
+            assert!(empty_table.is_empty());
+        }
+
+        {
+            let mut single_table: HashTable<Item> = HashTable::with_capacity(0);
+            let hash = hash_key(&state, 42);
+            single_table
+                .entry(hash, |v| v.key == 42, |v| hash_key(&state, v.key))
+                .or_insert(Item {
+                    key: 42,
+                    value: 123,
+                });
+
+            assert_eq!(single_table.len(), 1);
+
+            let drained: Vec<Item> = single_table.drain().collect();
+            assert_eq!(drained.len(), 1);
+            assert_eq!(drained[0].key, 42);
+            assert_eq!(drained[0].value, 123);
+            assert_eq!(single_table.len(), 0);
+            assert!(single_table.is_empty());
+        }
+
+        {
+            let mut single_table: HashTable<Item> = HashTable::with_capacity(0);
+            let hash = hash_key(&state, 99);
+            single_table
+                .entry(hash, |v| v.key == 99, |v| hash_key(&state, v.key))
+                .or_insert(Item {
+                    key: 99,
+                    value: 456,
+                });
+
+            let mut drainer = single_table.drain();
+            let item = drainer.next().unwrap();
+            assert_eq!(item.key, 99);
+            assert_eq!(item.value, 456);
+
+            assert!(drainer.next().is_none());
+            drop(drainer);
+
+            assert_eq!(single_table.len(), 0);
+            assert!(single_table.is_empty());
+        }
     }
 }

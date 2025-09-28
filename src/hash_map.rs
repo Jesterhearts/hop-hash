@@ -601,6 +601,10 @@ where
     ///
     /// After calling `drain()`, the map will be empty.
     ///
+    /// Calling `mem::forget` on the returned iterator will leak all key-value
+    /// pairs in the map that have not yet been yielded. This can cause memory
+    /// leaks.
+    ///
     /// # Examples
     ///
     /// ```rust
@@ -883,7 +887,7 @@ pub struct Drain<'a, K, V> {
     inner: crate::hash_table::Drain<'a, (K, V)>,
 }
 
-impl<'a, K, V> Iterator for Drain<'a, K, V> {
+impl<K, V> Iterator for Drain<'_, K, V> {
     type Item = (K, V);
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -891,7 +895,7 @@ impl<'a, K, V> Iterator for Drain<'a, K, V> {
     }
 }
 
-impl<'a, K, V> Drop for Drain<'a, K, V> {
+impl<K, V> Drop for Drain<'_, K, V> {
     fn drop(&mut self) {
         for _ in self {}
     }
