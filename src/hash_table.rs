@@ -2194,14 +2194,18 @@ impl<'a, V> Iterator for Iter<'a, V> {
     type Item = &'a V;
 
     fn next(&mut self) -> Option<Self::Item> {
+        if self.table.is_empty() {
+            return None;
+        }
+
         // SAFETY: The `unsafe` block is safe because we are iterating through the
         // table's slots within the valid bounds (`0..total_slots`).
+        // - We guarded against an empty table at the start of `next()`.
         // - `is_occupied` is safe to call because `self.bucket_index` is always less
         //   than `total_slots`.
         // - `get_unchecked` is safe for the same reason.
         // - `assume_init_ref` is safe because we only call it after `is_occupied`
         //   returns true, which guarantees the slot contains an initialized value.
-
         unsafe {
             let total_slots = (self.table.max_root_mask.wrapping_add(1) + HOP_RANGE) * LANES;
             while self.bucket_index < total_slots {
@@ -2266,12 +2270,13 @@ impl<'a, V> Iterator for Drain<'a, V> {
     type Item = V;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.table.populated == 0 {
+        if self.table.is_empty() {
             return None;
         }
 
         // SAFETY: The `unsafe` block is safe because we are iterating through the
         // table's slots within the valid bounds (`0..total_slots`).
+        // - We guarded against an empty table at the start of `next()`.
         // - `is_occupied` and `clear_occupied` are safe because `self.bucket_index` is
         //   always less than `total_slots`.
         // - `get_unchecked` is safe for the same reason.
