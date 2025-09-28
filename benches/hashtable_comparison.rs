@@ -291,7 +291,7 @@ fn bench_collect_find<TestItem: KeyValuePair, const MAX_SIZE: usize>(c: &mut Cri
 
         let lookup_hash_and_item = hash_and_item.clone();
 
-        group.throughput(Throughput::Elements(hop_capacity as u64));
+        group.throughput(Throughput::Elements(hop_capacity as u64 * 2));
         group.bench_function("hop_hash", |b| {
             b.iter_batched(
                 || {
@@ -322,7 +322,7 @@ fn bench_collect_find<TestItem: KeyValuePair, const MAX_SIZE: usize>(c: &mut Cri
             )
         });
 
-        group.throughput(Throughput::Elements(hashbrown_capacity as u64));
+        group.throughput(Throughput::Elements(hashbrown_capacity as u64 * 2));
         group.bench_function("hashbrown", |b| {
             b.iter_batched(
                 || {
@@ -381,7 +381,7 @@ fn bench_collect_find_preallocated<TestItem: KeyValuePair, const MAX_SIZE: usize
 
         let lookup_hash_and_item = hash_and_item.clone();
 
-        group.throughput(Throughput::Elements(hop_capacity as u64));
+        group.throughput(Throughput::Elements(hop_capacity as u64 * 2));
         group.bench_function("hop_hash", |b| {
             b.iter_batched(
                 || {
@@ -412,7 +412,7 @@ fn bench_collect_find_preallocated<TestItem: KeyValuePair, const MAX_SIZE: usize
             )
         });
 
-        group.throughput(Throughput::Elements(hashbrown_capacity as u64));
+        group.throughput(Throughput::Elements(hashbrown_capacity as u64 * 2));
         group.bench_function("hashbrown", |b| {
             b.iter_batched(
                 || {
@@ -1275,7 +1275,7 @@ fn bench_mixed_probabilistic<TestItem: KeyValuePair, const MAX_SIZE: usize>(c: &
 fn bench_mixed_probabilistic_zipf<TestItem: KeyValuePair, const MAX_SIZE: usize>(
     c: &mut Criterion,
 ) {
-    for exponent in [1.0, 1.3] {
+    for exponent in [1.0, 1.3, 1.8] {
         let mut group = c.benchmark_group(format!(
             "mixed_probabilistic_zipf_{:.01}_{}",
             exponent,
