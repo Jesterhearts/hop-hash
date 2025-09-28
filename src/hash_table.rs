@@ -89,6 +89,29 @@
 //! this is avoided at the cost of O(N) lookup times and degraded performance,
 //! which seems like a reasonable trade-off.
 //!
+//! ### Other Quirks & Oddities
+//!
+//! The table makes use of `memset(0)` to initialize the hopinfo arrays rather
+//! than using `alloc_zeroed`. This makes a massive difference in benchmarks on
+//! my machine (30%) for some reason. I suspect it's a benchmarking artifact,
+//! but even if it wasn't, people don't tend to examine nuance for
+//! benchmarks, so it seems worth it.
+//!
+//! The table doesn't support 87.5% load (7/8) even though it would be easy to
+//! implement because it doesn't seem to impact benchmarks at all, so
+//! sacrificing 5% memory doesn't seem worth it. This is likely due to how
+//! lookups work, with something like 80-90% of items residing in their ideal
+//! bucket even at 92% load, so the extra few percent gained by going to 87.5%
+//! load don't seem to help much.
+//!
+//! The table _always_ examines bucket 0 during lookups without even checking
+//! the neighborhood layout. During testing, bucket 0 was found to almost always
+//! contain at least one item, and frequently was filled with 16 items mapped to
+//! their home bucket. Unconditionally checking this bucket first seems to
+//! improve benchmarks by a lot by skipping the extra lookup/cmp/mask
+//! required to examine the neighbors bitmap when 80-90% of lookups will have a
+//! hit without looking further.
+//!
 //! [`HashMap<K, V>`]: crate::hash_map::HashMap
 //! [`HashSet<V>`]: crate::hash_set::HashSet
 
@@ -149,7 +172,7 @@ unsafe fn prefetch<T>(ptr: *const T) {
 /// The alternative 0x00 would also work, with hashtags using 0x80 to mark
 /// occupied slots, but this is slightly faster during searches for empty slots
 /// during a collision/bubbling which is hot during profiling and seems to
-/// improve microbenchmarks.
+/// improve benchmarks.
 const EMPTY: u8 = 0x80;
 
 // Number of neighbors tracked per bucket. Could be larger for wider SIMD
