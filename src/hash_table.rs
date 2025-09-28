@@ -442,18 +442,22 @@ pub struct ProbeHistogram {
     buckets: usize,
     /// Histogram of probe lengths by number of buckets probed.
     pub probe_length_by_bucket: [usize; HOP_RANGE],
-    /// Histogram of probe lengths by number of entries in probed buckets.
+    /// Histogram of the total number of items in probed buckets, indexed by
+    /// probe length.
     ///
-    /// The final index indicates the overflow count (will almost always be 0).
+    /// This can be interpreted as a measure of the "work" required for lookups.
+    /// For a given probe length `L` (the number of neighbor buckets that need
+    /// to be scanned for items belonging to a root bucket), the value at
+    /// `[L-1]` is the sum of the number of items in all those `L` neighbor
+    /// buckets.
     ///
-    /// This chart can be a bit confusing at first glance. The "count" here
-    /// refers to the total number of entries in all buckets that were
-    /// probed to find the target entry. For example, if the target entry
-    /// was found after probing 3 buckets, and those buckets had 2, 4, and 1
-    /// entries respectively, the count would be 7 for a probe length of 3,
-    /// while the probe_length_by_bucket histogram would record a count of 1 for
-    /// a probe length of 3, and the bucket_distribution histogram would record
-    /// counts of 2, 4, and 1 for buckets at index 0, 1, and 2 respectively.
+    /// For example, if a root bucket has entries in 3 of its neighbor buckets
+    /// (probe length = 3), and those neighbor buckets contain 2, 4, and 1 items
+    /// respectively, then `probe_length_by_count[2]` (for L=3) would be
+    /// incremented by 7 (2+4+1).
+    ///
+    /// The final index `[HOP_RANGE]` stores the number of entries in the
+    /// overflow vector.
     pub probe_length_by_count: [usize; HOP_RANGE + 1],
     /// Distribution of number of entries in each bucket relative to its root.
     /// This shows how tightly clustered entries are around their ideal bucket
@@ -1780,9 +1784,10 @@ impl<V> HashTable<V> {
     /// Computes a histogram of probe lengths and bucket distribution for the
     /// current table state.
     ///
-    /// This method is intended for debugging and performance analysis. It returns
-    /// a [`ProbeHistogram`] struct containing detailed statistics about probe
-    /// lengths and how entries are distributed relative to their ideal buckets.
+    /// This method is intended for debugging and performance analysis. It
+    /// returns a [`ProbeHistogram`] struct containing detailed statistics
+    /// about probe lengths and how entries are distributed relative to
+    /// their ideal buckets.
     ///
     /// Test-only: compiled only with `cfg(test)`.
     #[cfg(test)]
