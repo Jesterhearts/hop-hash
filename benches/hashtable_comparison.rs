@@ -5,6 +5,7 @@ use core::hint::black_box;
 
 use criterion::AxisScale;
 use criterion::BatchSize;
+use criterion::BenchmarkId;
 use criterion::Criterion;
 use criterion::PlotConfiguration;
 use criterion::Throughput;
@@ -142,7 +143,7 @@ fn bench_insert_random<TestItem: KeyValuePair, const MAX_SIZE: usize>(c: &mut Cr
             .collect::<Vec<(u64, TestItem)>>();
 
         group.throughput(Throughput::Elements(hop_capacity as u64));
-        group.bench_function("hop_hash", |b| {
+        group.bench_function(BenchmarkId::new("hop_hash", size), |b| {
             b.iter_batched(
                 || {
                     let mut hash_and_item = hash_and_item.clone();
@@ -166,7 +167,7 @@ fn bench_insert_random<TestItem: KeyValuePair, const MAX_SIZE: usize>(c: &mut Cr
         });
 
         group.throughput(Throughput::Elements(hashbrown_capacity as u64));
-        group.bench_function("hashbrown", |b| {
+        group.bench_function(BenchmarkId::new("hashbrown", size), |b| {
             b.iter_batched(
                 || {
                     let mut hash_and_item = hash_and_item.clone();
@@ -218,7 +219,7 @@ fn bench_insert_random_preallocated<TestItem: KeyValuePair, const MAX_SIZE: usiz
             .collect::<Vec<(u64, TestItem)>>();
 
         group.throughput(Throughput::Elements(hop_capacity as u64));
-        group.bench_function("hop_hash", |b| {
+        group.bench_function(BenchmarkId::new("hop_hash", size), |b| {
             b.iter_batched(
                 || {
                     let mut hash_and_item = hash_and_item.clone();
@@ -242,7 +243,7 @@ fn bench_insert_random_preallocated<TestItem: KeyValuePair, const MAX_SIZE: usiz
         });
 
         group.throughput(Throughput::Elements(hashbrown_capacity as u64));
-        group.bench_function("hashbrown", |b| {
+        group.bench_function(BenchmarkId::new("hashbrown", size), |b| {
             b.iter_batched(
                 || {
                     let mut hash_and_item = hash_and_item.clone();
@@ -292,7 +293,7 @@ fn bench_collect_find<TestItem: KeyValuePair, const MAX_SIZE: usize>(c: &mut Cri
         let lookup_hash_and_item = hash_and_item.clone();
 
         group.throughput(Throughput::Elements(hop_capacity as u64 * 2));
-        group.bench_function("hop_hash", |b| {
+        group.bench_function(BenchmarkId::new("hop_hash", size), |b| {
             b.iter_batched(
                 || {
                     let mut hash_and_item = hash_and_item.clone();
@@ -323,7 +324,7 @@ fn bench_collect_find<TestItem: KeyValuePair, const MAX_SIZE: usize>(c: &mut Cri
         });
 
         group.throughput(Throughput::Elements(hashbrown_capacity as u64 * 2));
-        group.bench_function("hashbrown", |b| {
+        group.bench_function(BenchmarkId::new("hashbrown", size), |b| {
             b.iter_batched(
                 || {
                     let mut hash_and_item = hash_and_item.clone();
@@ -382,7 +383,7 @@ fn bench_collect_find_preallocated<TestItem: KeyValuePair, const MAX_SIZE: usize
         let lookup_hash_and_item = hash_and_item.clone();
 
         group.throughput(Throughput::Elements(hop_capacity as u64 * 2));
-        group.bench_function("hop_hash", |b| {
+        group.bench_function(BenchmarkId::new("hop_hash", size), |b| {
             b.iter_batched(
                 || {
                     let mut hash_and_item = hash_and_item.clone();
@@ -413,7 +414,7 @@ fn bench_collect_find_preallocated<TestItem: KeyValuePair, const MAX_SIZE: usize
         });
 
         group.throughput(Throughput::Elements(hashbrown_capacity as u64 * 2));
-        group.bench_function("hashbrown", |b| {
+        group.bench_function(BenchmarkId::new("hashbrown", size), |b| {
             b.iter_batched(
                 || {
                     let mut hash_and_item = hash_and_item.clone();
@@ -501,7 +502,7 @@ fn bench_find_hit_miss<TestItem: KeyValuePair, const MAX_SIZE: usize>(c: &mut Cr
         }
 
         group.throughput(Throughput::Elements((hop_capacity) as u64));
-        group.bench_function("hop_hash", |b| {
+        group.bench_function(BenchmarkId::new("hop_hash", size), |b| {
             b.iter_batched(
                 || {
                     let mut combined_hash_and_key = combined_hash_and_key.clone();
@@ -531,7 +532,7 @@ fn bench_find_hit_miss<TestItem: KeyValuePair, const MAX_SIZE: usize>(c: &mut Cr
         }
 
         group.throughput(Throughput::Elements((hashbrown_capacity) as u64));
-        group.bench_function("hashbrown", |b| {
+        group.bench_function(BenchmarkId::new("hashbrown", size), |b| {
             b.iter_batched(
                 || {
                     let mut combined_hash_and_key = combined_hash_and_key.clone();
@@ -584,7 +585,7 @@ fn bench_find_hit<TestItem: KeyValuePair, const MAX_SIZE: usize>(c: &mut Criteri
         }
 
         group.throughput(Throughput::Elements((hop_capacity) as u64));
-        group.bench_function("hop_hash", |b| {
+        group.bench_function(BenchmarkId::new("hop_hash", size), |b| {
             b.iter_batched(
                 || {
                     let mut hash_and_item = hash_and_item.clone();
@@ -611,7 +612,7 @@ fn bench_find_hit<TestItem: KeyValuePair, const MAX_SIZE: usize>(c: &mut Criteri
         }
 
         group.throughput(Throughput::Elements((hashbrown_capacity) as u64));
-        group.bench_function("hashbrown", |b| {
+        group.bench_function(BenchmarkId::new("hashbrown", size), |b| {
             b.iter_batched(
                 || {
                     let mut hash_and_item = hash_and_item.clone();
@@ -671,7 +672,7 @@ fn bench_find_miss<TestItem: KeyValuePair, const MAX_SIZE: usize>(c: &mut Criter
         }
 
         group.throughput(Throughput::Elements((hop_capacity) as u64));
-        group.bench_function("hop_hash", |b| {
+        group.bench_function(BenchmarkId::new("hop_hash", size), |b| {
             b.iter_batched(
                 || {
                     let mut misses_hash_and_key = misses_hash_and_key.clone();
@@ -698,7 +699,7 @@ fn bench_find_miss<TestItem: KeyValuePair, const MAX_SIZE: usize>(c: &mut Criter
         }
 
         group.throughput(Throughput::Elements((hashbrown_capacity) as u64));
-        group.bench_function("hashbrown", |b| {
+        group.bench_function(BenchmarkId::new("hashbrown", size), |b| {
             b.iter_batched(
                 || {
                     let mut misses_hash_and_key = misses_hash_and_key.clone();
@@ -736,7 +737,7 @@ fn bench_remove<TestItem: KeyValuePair, const MAX_SIZE: usize>(c: &mut Criterion
             .collect::<Vec<(u64, TestItem)>>();
 
         group.throughput(Throughput::Elements(hop_capacity as u64));
-        group.bench_function("hop_hash", |b| {
+        group.bench_function(BenchmarkId::new("hop_hash", size), |b| {
             b.iter_batched(
                 || {
                     let mut hash_and_item = hash_and_item.clone();
@@ -766,7 +767,7 @@ fn bench_remove<TestItem: KeyValuePair, const MAX_SIZE: usize>(c: &mut Criterion
         });
 
         group.throughput(Throughput::Elements(hashbrown_capacity as u64));
-        group.bench_function("hashbrown", |b| {
+        group.bench_function(BenchmarkId::new("hashbrown", size), |b| {
             b.iter_batched(
                 || {
                     let mut hash_and_item = hash_and_item.clone();
@@ -832,7 +833,7 @@ fn bench_iteration<TestItem: KeyValuePair, const MAX_SIZE: usize>(c: &mut Criter
         }
 
         group.throughput(Throughput::Elements(hop_capacity as u64));
-        group.bench_function("hop_hash", |b| {
+        group.bench_function(BenchmarkId::new("hop_hash", size), |b| {
             b.iter(|| {
                 let mut count = 0;
                 for item in hop_table.iter() {
@@ -853,7 +854,7 @@ fn bench_iteration<TestItem: KeyValuePair, const MAX_SIZE: usize>(c: &mut Criter
         }
 
         group.throughput(Throughput::Elements(hashbrown_capacity as u64));
-        group.bench_function("hashbrown", |b| {
+        group.bench_function(BenchmarkId::new("hashbrown", size), |b| {
             b.iter(|| {
                 let mut count = 0;
                 for item in hashbrown_table.iter() {
@@ -886,7 +887,7 @@ fn bench_drain<TestItem: KeyValuePair, const MAX_SIZE: usize>(c: &mut Criterion)
             .collect::<Vec<(u64, TestItem)>>();
 
         group.throughput(Throughput::Elements(hop_capacity as u64));
-        group.bench_function("hop_hash", |b| {
+        group.bench_function(BenchmarkId::new("hop_hash", size), |b| {
             b.iter_batched(
                 || {
                     let mut table = HopHashTable::<TestItem>::with_capacity(0);
@@ -913,7 +914,7 @@ fn bench_drain<TestItem: KeyValuePair, const MAX_SIZE: usize>(c: &mut Criterion)
         });
 
         group.throughput(Throughput::Elements(hashbrown_capacity as u64));
-        group.bench_function("hashbrown", |b| {
+        group.bench_function(BenchmarkId::new("hashbrown", size), |b| {
             b.iter_batched(
                 || {
                     let mut table = HashbrownHashTable::<TestItem>::with_capacity(0);
@@ -984,7 +985,7 @@ fn bench_mixed_workload<TestItem: KeyValuePair, const MAX_SIZE: usize>(c: &mut C
             .collect::<Vec<(u64, TestItem)>>();
 
         group.throughput(Throughput::Elements(hop_capacity as u64 * 2));
-        group.bench_function("hop_hash", |b| {
+        group.bench_function(BenchmarkId::new("hop_hash", size), |b| {
             b.iter_batched(
                 || {
                     let mut initial_hash_and_item = initial_hash_and_item.clone();
@@ -1037,7 +1038,7 @@ fn bench_mixed_workload<TestItem: KeyValuePair, const MAX_SIZE: usize>(c: &mut C
         });
 
         group.throughput(Throughput::Elements(hashbrown_capacity as u64 * 2));
-        group.bench_function("hashbrown", |b| {
+        group.bench_function(BenchmarkId::new("hashbrown", size), |b| {
             b.iter_batched(
                 || {
                     let mut initial_hash_and_item = initial_hash_and_item.clone();
@@ -1151,7 +1152,7 @@ fn bench_mixed_probabilistic<TestItem: KeyValuePair, const MAX_SIZE: usize>(c: &
             Zipf::new(hop_capacity as f32 * KEY_SPACE_MULTIPLIER as f32 - 1.0, 1.0).unwrap();
 
         group.throughput(Throughput::Elements(hop_capacity as u64 * 3));
-        group.bench_function("hop_hash", |b| {
+        group.bench_function(BenchmarkId::new("hop_hash", size), |b| {
             b.iter_batched(
                 || {
                     let mut table = HopHashTable::<TestItem>::with_capacity(0);
@@ -1211,7 +1212,7 @@ fn bench_mixed_probabilistic<TestItem: KeyValuePair, const MAX_SIZE: usize>(c: &
         )
         .unwrap();
         group.throughput(Throughput::Elements(hashbrown_capacity as u64 * 3));
-        group.bench_function("hashbrown", |b| {
+        group.bench_function(BenchmarkId::new("hashbrown", size), |b| {
             b.iter_batched(
                 || {
                     let mut table = HashbrownHashTable::<TestItem>::with_capacity(0);
@@ -1322,7 +1323,7 @@ fn bench_mixed_probabilistic_zipf<TestItem: KeyValuePair, const MAX_SIZE: usize>
                 Zipf::new(hop_capacity as f32 * KEY_SPACE_MULTIPLIER as f32 - 1.0, 1.0).unwrap();
 
             group.throughput(Throughput::Elements(hop_capacity as u64 * 3));
-            group.bench_function("hop_hash", |b| {
+            group.bench_function(BenchmarkId::new("hop_hash", size), |b| {
                 b.iter_batched(
                     || {
                         let mut table = HopHashTable::<TestItem>::with_capacity(0);
@@ -1383,7 +1384,7 @@ fn bench_mixed_probabilistic_zipf<TestItem: KeyValuePair, const MAX_SIZE: usize>
             )
             .unwrap();
             group.throughput(Throughput::Elements(hashbrown_capacity as u64 * 3));
-            group.bench_function("hashbrown", |b| {
+            group.bench_function(BenchmarkId::new("hashbrown", size), |b| {
                 b.iter_batched(
                     || {
                         let mut table = HashbrownHashTable::<TestItem>::with_capacity(0);
@@ -1463,7 +1464,7 @@ fn bench_churn<TestItem: KeyValuePair, const MAX_SIZE: usize>(c: &mut Criterion)
             .collect::<Vec<(u64, TestItem)>>();
 
         group.throughput(Throughput::Elements(hop_capacity as u64 * 2));
-        group.bench_function("hop_hash", |b| {
+        group.bench_function(BenchmarkId::new("hop_hash", size), |b| {
             b.iter_batched(
                 || {
                     let mut hash_and_item = insertions_and_removals.clone();
@@ -1489,7 +1490,7 @@ fn bench_churn<TestItem: KeyValuePair, const MAX_SIZE: usize>(c: &mut Criterion)
         });
 
         group.throughput(Throughput::Elements(hashbrown_capacity as u64 * 2));
-        group.bench_function("hashbrown", |b| {
+        group.bench_function(BenchmarkId::new("hashbrown", size), |b| {
             b.iter_batched(
                 || {
                     let mut hash_and_item = insertions_and_removals.clone();
