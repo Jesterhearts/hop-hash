@@ -886,6 +886,11 @@ impl<V> HashTable<V> {
         let old_populated = self.tags_ptr();
         let mut occupied = Box::new_uninit_slice(old_populated.len());
 
+        // SAFETY: We have ensured that `old_populated` and `occupied` point to
+        // valid memory regions of the same length. We copy the tags from
+        // `old_populated` to `occupied`, then zero out the hopmap and mark all buckets
+        // as empty so we don't double-drop. Finally, we assume that `occupied`
+        // is initialized since we just copied data into it.
         let occupied = unsafe {
             core::ptr::copy_nonoverlapping(
                 old_populated.as_ref().as_ptr(),

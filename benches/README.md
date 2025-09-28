@@ -86,6 +86,11 @@ size of the map the operations are performed on, but is not exactly equal to it.
 generated after-the-fact from the benchmark results, and the exact table sizes aren't recorded in
 the benchmarks, but the number of operations is.
 
+Keep in mind while reviewing these results that benchmarks on my machine can vary by up to 5%
+(although <3% is typical) between runs even though I'm running these on a quiet system. Also keep in
+mind that hop-hash is running at a load factor of 92%, while hashbrown is running at a load factor
+of 87.5%.
+
 | Benchmark                    | Test Item     |  O(Ops) |    hashbrown |     hop_hash | Relative Performance |
 | ---------------------------- | ------------- | ------: | -----------: | -----------: | -------------------- |
 | Churn                        | TestItem      |    4096 |  18.15 ns/op |  18.75 ns/op | 0.97x                |
@@ -132,15 +137,15 @@ the benchmarks, but the number of operations is.
 | Collect Find Preallocated    | LargeTestItem |   32768 | 204.84 ns/op | 244.48 ns/op | 0.84x                |
 | Collect Find Preallocated    | LargeTestItem |   65536 | 255.43 ns/op | 302.75 ns/op | 0.84x                |
 | <hr/>                        |               |         |              |              |                      |
-| Drain                        | TestItem      |    2048 |  13.07 ns/op |  11.46 ns/op | 1.14x                |
-| Drain                        | TestItem      |    4096 |  13.76 ns/op |  11.36 ns/op | 1.21x                |
-| Drain                        | TestItem      |    8192 |  13.67 ns/op |  11.80 ns/op | 1.16x                |
-| Drain                        | TestItem      |   16384 |  15.15 ns/op |  12.20 ns/op | 1.24x                |
-| Drain                        | TestItem      |   32768 |  16.37 ns/op |  12.52 ns/op | 1.31x                |
-| Drain                        | TestItem      |   65536 |  18.66 ns/op |  13.35 ns/op | 1.40x                |
-| Drain                        | TestItem      |  131072 |  21.00 ns/op |  15.55 ns/op | 1.35x                |
-| Drain                        | TestItem      |  262144 |  47.00 ns/op |  31.63 ns/op | 1.49x                |
-| Drain                        | TestItem      |  524288 |  82.31 ns/op |  54.62 ns/op | 1.51x                |
+| Drain                        | TestItem      |    2048 |  13.29 ns/op |  11.34 ns/op | 1.17x                |
+| Drain                        | TestItem      |    4096 |  13.62 ns/op |  11.20 ns/op | 1.22x                |
+| Drain                        | TestItem      |    8192 |  14.05 ns/op |  11.70 ns/op | 1.20x                |
+| Drain                        | TestItem      |   16384 |  14.97 ns/op |  12.23 ns/op | 1.22x                |
+| Drain                        | TestItem      |   32768 |  16.00 ns/op |  12.16 ns/op | 1.32x                |
+| Drain                        | TestItem      |   65536 |  17.64 ns/op |  12.76 ns/op | 1.38x                |
+| Drain                        | TestItem      |  131072 |  23.23 ns/op |  15.42 ns/op | 1.51x                |
+| Drain                        | TestItem      |  262144 |  48.55 ns/op |  33.98 ns/op | 1.43x                |
+| Drain                        | TestItem      |  524288 |  81.42 ns/op |  67.28 ns/op | 1.21x                |
 | <hr/>                        |               |         |              |              |                      |
 | Iteration                    | TestItem      |    2048 |   0.42 ns/op |   0.39 ns/op | 1.08x                |
 | Iteration                    | TestItem      |    4096 |   0.44 ns/op |   0.39 ns/op | 1.11x                |
