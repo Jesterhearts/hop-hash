@@ -4,7 +4,7 @@
 - Hop-hash significantly underperforms Hashbrown for single-operation workloads (get-only or insert-only).
 - Iteration performance is better than Hashbrown.
 
-## Individual Results
+## Individual Result Graphs
 
 In all cases, Hashbrown is represented with the red line, and Hop-hash is represented with the green line.
 
@@ -79,7 +79,7 @@ items from the table.
 
 ![drain benchmark results](images/drain.png)
 
-## Selected Results Tables
+## Selected Result Tables
 
 Keep in mind while reviewing these results that benchmarks on my machine can vary by up to 5%
 (although <3% is typical) between runs even though I'm running these on a quiet system. Also keep in

@@ -28,3 +28,7 @@ inherits = "release"
 [[bench]]
 name    = "hashtable_comparison"
 harness = false
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = [ "--generate-link-to-definition" ]

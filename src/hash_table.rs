@@ -93,9 +93,7 @@
 //!
 //! The table makes use of `memset(0)` to initialize the hopinfo arrays rather
 //! than using `alloc_zeroed`. This makes a massive difference in benchmarks on
-//! my machine (30%) for some reason. I suspect it's a benchmarking artifact,
-//! but even if it wasn't, people don't tend to examine nuance for
-//! benchmarks, so it seems worth it.
+//! my machine (30%) for some reason. I suspect it's a benchmarking artifact.
 //!
 //! The table doesn't support 87.5% load (7/8) even though it would be easy to
 //! implement because it doesn't seem to impact benchmarks at all, so
