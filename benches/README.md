@@ -79,130 +79,440 @@ items from the table.
 
 ![drain benchmark results](images/drain.png)
 
-## Selected Results Table:
-
-O(Ops) is an _approximation_ of the number of operations performed. It is highly correlated with the
-size of the map the operations are performed on, but is not exactly equal to it. This table is
-generated after-the-fact from the benchmark results, and the exact table sizes aren't recorded in
-the benchmarks, but the number of operations is.
+## Selected Results Tables
 
 Keep in mind while reviewing these results that benchmarks on my machine can vary by up to 5%
 (although <3% is typical) between runs even though I'm running these on a quiet system. Also keep in
 mind that hop-hash is running at a load factor of 92%, while hashbrown is running at a load factor
 of 87.5%.
 
-| Benchmark                    | Test Item     |  O(Ops) |    hashbrown |     hop_hash | Relative Performance |
-| ---------------------------- | ------------- | ------: | -----------: | -----------: | -------------------- |
-| Churn                        | TestItem      |    4096 |  18.15 ns/op |  18.75 ns/op | 0.97x                |
-| Churn                        | TestItem      |    8192 |  19.98 ns/op |  21.47 ns/op | 0.93x                |
-| Churn                        | TestItem      |   16384 |  22.65 ns/op |  24.39 ns/op | 0.93x                |
-| Churn                        | TestItem      |   32768 |  23.45 ns/op |  25.79 ns/op | 0.91x                |
-| Churn                        | TestItem      |   65536 |  29.96 ns/op |  29.02 ns/op | 1.03x                |
-| Churn                        | TestItem      |  131072 |  47.29 ns/op |  42.12 ns/op | 1.12x                |
-| Churn                        | TestItem      |  262144 |  90.57 ns/op |  77.51 ns/op | 1.17x                |
-| Churn                        | TestItem      |  524288 | 120.26 ns/op | 104.76 ns/op | 1.15x                |
-| Churn                        | TestItem      | 1048576 | 145.87 ns/op | 141.16 ns/op | 1.03x                |
-| <hr/>                        |               |         |              |              |                      |
-| Collect Find                 | TestItem      |    2048 |  35.02 ns/op |  39.88 ns/op | 0.88x                |
-| Collect Find                 | TestItem      |    4096 |  36.57 ns/op |  44.85 ns/op | 0.82x                |
-| Collect Find                 | TestItem      |    8192 |  40.55 ns/op |  47.80 ns/op | 0.85x                |
-| Collect Find                 | TestItem      |   16384 |  43.53 ns/op |  49.89 ns/op | 0.87x                |
-| Collect Find                 | TestItem      |   32768 |  59.53 ns/op |  67.72 ns/op | 0.88x                |
-| Collect Find                 | TestItem      |   65536 |  81.11 ns/op |  86.29 ns/op | 0.94x                |
-| Collect Find                 | TestItem      |  131072 | 159.80 ns/op | 146.54 ns/op | 1.09x                |
-| Collect Find                 | TestItem      |  262144 | 201.23 ns/op | 226.99 ns/op | 0.89x                |
-| Collect Find                 | TestItem      |  524288 | 269.92 ns/op | 279.03 ns/op | 0.97x                |
-| <hr/>                        |               |         |              |              |                      |
-| Collect Find                 | LargeTestItem |    2048 | 123.88 ns/op |  99.40 ns/op | 1.25x                |
-| Collect Find                 | LargeTestItem |    4096 | 231.88 ns/op | 219.23 ns/op | 1.06x                |
-| Collect Find                 | LargeTestItem |    8192 | 280.67 ns/op | 246.94 ns/op | 1.14x                |
-| Collect Find                 | LargeTestItem |   16384 | 299.86 ns/op | 266.13 ns/op | 1.13x                |
-| Collect Find                 | LargeTestItem |   32768 | 382.52 ns/op | 324.24 ns/op | 1.18x                |
-| Collect Find                 | LargeTestItem |   65536 | 452.89 ns/op | 386.61 ns/op | 1.17x                |
-| <hr/>                        |               |         |              |              |                      |
-| Collect Find Preallocated    | TestItem      |    2048 |  21.48 ns/op |  25.81 ns/op | 0.83x                |
-| Collect Find Preallocated    | TestItem      |    4096 |  20.68 ns/op |  26.80 ns/op | 0.77x                |
-| Collect Find Preallocated    | TestItem      |    8192 |  23.22 ns/op |  34.58 ns/op | 0.67x                |
-| Collect Find Preallocated    | TestItem      |   16384 |  26.69 ns/op |  36.74 ns/op | 0.73x                |
-| Collect Find Preallocated    | TestItem      |   32768 |  47.33 ns/op |  52.50 ns/op | 0.90x                |
-| Collect Find Preallocated    | TestItem      |   65536 |  55.81 ns/op |  77.78 ns/op | 0.72x                |
-| Collect Find Preallocated    | TestItem      |  131072 |  95.87 ns/op | 111.13 ns/op | 0.86x                |
-| Collect Find Preallocated    | TestItem      |  262144 | 139.33 ns/op | 157.90 ns/op | 0.88x                |
-| Collect Find Preallocated    | TestItem      |  524288 | 168.71 ns/op | 187.89 ns/op | 0.90x                |
-| <hr/>                        |               |         |              |              |                      |
-| Collect Find Preallocated    | LargeTestItem |    2048 |  79.75 ns/op | 112.30 ns/op | 0.71x                |
-| Collect Find Preallocated    | LargeTestItem |    4096 | 175.47 ns/op | 209.28 ns/op | 0.84x                |
-| Collect Find Preallocated    | LargeTestItem |    8192 | 175.35 ns/op | 216.77 ns/op | 0.81x                |
-| Collect Find Preallocated    | LargeTestItem |   16384 | 176.39 ns/op | 217.92 ns/op | 0.81x                |
-| Collect Find Preallocated    | LargeTestItem |   32768 | 204.84 ns/op | 244.48 ns/op | 0.84x                |
-| Collect Find Preallocated    | LargeTestItem |   65536 | 255.43 ns/op | 302.75 ns/op | 0.84x                |
-| <hr/>                        |               |         |              |              |                      |
-| Drain                        | TestItem      |    2048 |  13.29 ns/op |  11.34 ns/op | 1.17x                |
-| Drain                        | TestItem      |    4096 |  13.62 ns/op |  11.20 ns/op | 1.22x                |
-| Drain                        | TestItem      |    8192 |  14.05 ns/op |  11.70 ns/op | 1.20x                |
-| Drain                        | TestItem      |   16384 |  14.97 ns/op |  12.23 ns/op | 1.22x                |
-| Drain                        | TestItem      |   32768 |  16.00 ns/op |  12.16 ns/op | 1.32x                |
-| Drain                        | TestItem      |   65536 |  17.64 ns/op |  12.76 ns/op | 1.38x                |
-| Drain                        | TestItem      |  131072 |  23.23 ns/op |  15.42 ns/op | 1.51x                |
-| Drain                        | TestItem      |  262144 |  48.55 ns/op |  33.98 ns/op | 1.43x                |
-| Drain                        | TestItem      |  524288 |  81.42 ns/op |  67.28 ns/op | 1.21x                |
-| <hr/>                        |               |         |              |              |                      |
-| Iteration                    | TestItem      |    2048 |   0.42 ns/op |   0.39 ns/op | 1.08x                |
-| Iteration                    | TestItem      |    4096 |   0.44 ns/op |   0.39 ns/op | 1.11x                |
-| Iteration                    | TestItem      |    8192 |   0.43 ns/op |   0.37 ns/op | 1.18x                |
-| Iteration                    | TestItem      |   16384 |   0.44 ns/op |   0.36 ns/op | 1.23x                |
-| Iteration                    | TestItem      |   32768 |   0.45 ns/op |   0.36 ns/op | 1.23x                |
-| Iteration                    | TestItem      |   65536 |   0.49 ns/op |   0.37 ns/op | 1.32x                |
-| Iteration                    | TestItem      |  131072 |   0.55 ns/op |   0.39 ns/op | 1.40x                |
-| Iteration                    | TestItem      |  262144 |   0.60 ns/op |   0.41 ns/op | 1.47x                |
-| Iteration                    | TestItem      |  524288 |   0.66 ns/op |   0.45 ns/op | 1.45x                |
-| <hr/>                        |               |         |              |              |                      |
-| Mixed Probabilistic          | TestItem      |    8192 | 168.40 ns/op | 168.53 ns/op | 1.00x                |
-| Mixed Probabilistic          | TestItem      |   16384 | 173.33 ns/op | 168.57 ns/op | 1.03x                |
-| Mixed Probabilistic          | TestItem      |   32768 | 172.92 ns/op | 173.35 ns/op | 1.00x                |
-| Mixed Probabilistic          | TestItem      |   65536 | 174.94 ns/op | 170.65 ns/op | 1.03x                |
-| Mixed Probabilistic          | TestItem      |  131072 | 175.58 ns/op | 171.21 ns/op | 1.03x                |
-| Mixed Probabilistic          | TestItem      |  262144 | 177.47 ns/op | 175.26 ns/op | 1.01x                |
-| Mixed Probabilistic          | TestItem      |  524288 | 191.76 ns/op | 185.82 ns/op | 1.03x                |
-| Mixed Probabilistic          | TestItem      | 1048576 | 236.89 ns/op | 211.27 ns/op | 1.12x                |
-| Mixed Probabilistic          | TestItem      | 2097152 | 253.68 ns/op | 246.70 ns/op | 1.03x                |
-| <hr/>                        |               |         |              |              |                      |
-| Mixed Probabilistic Zipf 1.0 | TestItem      |    8192 | 166.86 ns/op | 163.42 ns/op | 1.02x                |
-| Mixed Probabilistic Zipf 1.0 | TestItem      |   16384 | 164.36 ns/op | 165.79 ns/op | 0.99x                |
-| Mixed Probabilistic Zipf 1.0 | TestItem      |   32768 | 165.57 ns/op | 165.36 ns/op | 1.00x                |
-| Mixed Probabilistic Zipf 1.0 | TestItem      |   65536 | 174.72 ns/op | 167.74 ns/op | 1.04x                |
-| Mixed Probabilistic Zipf 1.0 | TestItem      |  131072 | 175.09 ns/op | 170.38 ns/op | 1.03x                |
-| Mixed Probabilistic Zipf 1.0 | TestItem      |  262144 | 177.53 ns/op | 172.40 ns/op | 1.03x                |
-| Mixed Probabilistic Zipf 1.0 | TestItem      |  524288 | 192.09 ns/op | 180.73 ns/op | 1.06x                |
-| Mixed Probabilistic Zipf 1.0 | TestItem      | 1048576 | 239.26 ns/op | 221.58 ns/op | 1.08x                |
-| Mixed Probabilistic Zipf 1.0 | TestItem      | 2097152 | 258.71 ns/op | 249.70 ns/op | 1.04x                |
-| <hr/>                        |               |         |              |              |                      |
-| Mixed Probabilistic Zipf 1.3 | TestItem      |    8192 | 162.90 ns/op | 165.21 ns/op | 0.99x                |
-| Mixed Probabilistic Zipf 1.3 | TestItem      |   16384 | 164.30 ns/op | 165.40 ns/op | 0.99x                |
-| Mixed Probabilistic Zipf 1.3 | TestItem      |   32768 | 159.75 ns/op | 166.72 ns/op | 0.96x                |
-| Mixed Probabilistic Zipf 1.3 | TestItem      |   65536 | 172.65 ns/op | 168.15 ns/op | 1.03x                |
-| Mixed Probabilistic Zipf 1.3 | TestItem      |  131072 | 175.07 ns/op | 168.90 ns/op | 1.04x                |
-| Mixed Probabilistic Zipf 1.3 | TestItem      |  262144 | 176.60 ns/op | 171.43 ns/op | 1.03x                |
-| Mixed Probabilistic Zipf 1.3 | TestItem      |  524288 | 193.39 ns/op | 185.01 ns/op | 1.05x                |
-| Mixed Probabilistic Zipf 1.3 | TestItem      | 1048576 | 223.08 ns/op | 213.92 ns/op | 1.04x                |
-| Mixed Probabilistic Zipf 1.3 | TestItem      | 2097152 | 255.72 ns/op | 250.13 ns/op | 1.02x                |
-| <hr/>                        |               |         |              |              |                      |
-| Mixed Probabilistic Zipf 1.8 | TestItem      |    8192 | 163.65 ns/op | 162.64 ns/op | 1.01x                |
-| Mixed Probabilistic Zipf 1.8 | TestItem      |   16384 | 165.34 ns/op | 161.43 ns/op | 1.02x                |
-| Mixed Probabilistic Zipf 1.8 | TestItem      |   32768 | 166.24 ns/op | 162.71 ns/op | 1.02x                |
-| Mixed Probabilistic Zipf 1.8 | TestItem      |   65536 | 174.16 ns/op | 166.65 ns/op | 1.05x                |
-| Mixed Probabilistic Zipf 1.8 | TestItem      |  131072 | 175.40 ns/op | 168.61 ns/op | 1.04x                |
-| Mixed Probabilistic Zipf 1.8 | TestItem      |  262144 | 178.91 ns/op | 176.49 ns/op | 1.01x                |
-| Mixed Probabilistic Zipf 1.8 | TestItem      |  524288 | 200.03 ns/op | 187.60 ns/op | 1.07x                |
-| Mixed Probabilistic Zipf 1.8 | TestItem      | 1048576 | 230.09 ns/op | 217.34 ns/op | 1.06x                |
-| Mixed Probabilistic Zipf 1.8 | TestItem      | 2097152 | 254.97 ns/op | 251.88 ns/op | 1.01x                |
-| <hr/>                        |               |         |              |              |                      |
-| Mixed Workload               | TestItem      |    4096 |  40.43 ns/op |  38.66 ns/op | 1.05x                |
-| Mixed Workload               | TestItem      |    8192 |  42.37 ns/op |  42.28 ns/op | 1.00x                |
-| Mixed Workload               | TestItem      |   16384 |  46.20 ns/op |  45.43 ns/op | 1.02x                |
-| Mixed Workload               | TestItem      |   32768 |  59.51 ns/op |  47.42 ns/op | 1.26x                |
-| Mixed Workload               | TestItem      |   65536 |  70.30 ns/op |  55.33 ns/op | 1.27x                |
-| Mixed Workload               | TestItem      |  131072 |  91.43 ns/op |  67.25 ns/op | 1.36x                |
-| Mixed Workload               | TestItem      |  262144 | 160.65 ns/op | 122.19 ns/op | 1.31x                |
-| Mixed Workload               | TestItem      |  524288 | 237.00 ns/op | 181.28 ns/op | 1.31x                |
-| Mixed Workload               | TestItem      | 1048576 | 305.75 ns/op | 238.51 ns/op | 1.28x                |
+### Benchmark: `churn` | Item Type: `LargeTestItem`
+
+| Size  | hashbrown    | hop_hash     | Comparison                       |
+| ----- | ------------ | ------------ | -------------------------------- |
+| 1024  | 80.93 ns/op  | 76.64 ns/op  | **hop_hash** is **1.06x** faster |
+| 2048  | 120.37 ns/op | 93.62 ns/op  | **hop_hash** is **1.29x** faster |
+| 4096  | 147.03 ns/op | 103.32 ns/op | **hop_hash** is **1.42x** faster |
+| 8192  | 152.50 ns/op | 110.68 ns/op | **hop_hash** is **1.38x** faster |
+| 16384 | 196.82 ns/op | 143.96 ns/op | **hop_hash** is **1.37x** faster |
+| 32768 | 221.65 ns/op | 161.27 ns/op | **hop_hash** is **1.37x** faster |
+
+
+### Benchmark: `churn` | Item Type: `TestItem`
+
+| Size   | hashbrown    | hop_hash     | Comparison                        |
+| ------ | ------------ | ------------ | --------------------------------- |
+| 1024   | 19.55 ns/op  | 19.50 ns/op  | **hop_hash** is **1.00x** faster  |
+| 2048   | 19.98 ns/op  | 21.34 ns/op  | **hashbrown** is **1.07x** faster |
+| 4096   | 21.42 ns/op  | 22.52 ns/op  | **hashbrown** is **1.05x** faster |
+| 8192   | 23.57 ns/op  | 25.25 ns/op  | **hashbrown** is **1.07x** faster |
+| 16384  | 29.60 ns/op  | 28.88 ns/op  | **hop_hash** is **1.03x** faster  |
+| 32768  | 41.68 ns/op  | 35.95 ns/op  | **hop_hash** is **1.16x** faster  |
+| 65536  | 71.42 ns/op  | 62.56 ns/op  | **hop_hash** is **1.14x** faster  |
+| 131072 | 109.27 ns/op | 94.95 ns/op  | **hop_hash** is **1.15x** faster  |
+| 262144 | 139.23 ns/op | 127.26 ns/op | **hop_hash** is **1.09x** faster  |
+
+
+### Benchmark: `collect_find` | Item Type: `LargeTestItem`
+
+| Size  | hashbrown    | hop_hash     | Comparison                       |
+| ----- | ------------ | ------------ | -------------------------------- |
+| 1024  | 61.45 ns/op  | 60.97 ns/op  | **hop_hash** is **1.01x** faster |
+| 2048  | 120.93 ns/op | 110.80 ns/op | **hop_hash** is **1.09x** faster |
+| 4096  | 149.75 ns/op | 128.90 ns/op | **hop_hash** is **1.16x** faster |
+| 8192  | 166.17 ns/op | 143.61 ns/op | **hop_hash** is **1.16x** faster |
+| 16384 | 190.05 ns/op | 163.11 ns/op | **hop_hash** is **1.17x** faster |
+| 32768 | 212.38 ns/op | 185.70 ns/op | **hop_hash** is **1.14x** faster |
+
+
+### Benchmark: `collect_find` | Item Type: `TestItem`
+
+| Size   | hashbrown    | hop_hash     | Comparison                        |
+| ------ | ------------ | ------------ | --------------------------------- |
+| 1024   | 18.33 ns/op  | 19.43 ns/op  | **hashbrown** is **1.06x** faster |
+| 2048   | 18.51 ns/op  | 22.01 ns/op  | **hashbrown** is **1.19x** faster |
+| 4096   | 20.04 ns/op  | 23.95 ns/op  | **hashbrown** is **1.19x** faster |
+| 8192   | 20.99 ns/op  | 25.91 ns/op  | **hashbrown** is **1.23x** faster |
+| 16384  | 30.31 ns/op  | 31.98 ns/op  | **hashbrown** is **1.06x** faster |
+| 32768  | 43.46 ns/op  | 42.04 ns/op  | **hop_hash** is **1.03x** faster  |
+| 65536  | 72.25 ns/op  | 70.03 ns/op  | **hop_hash** is **1.03x** faster  |
+| 131072 | 100.20 ns/op | 102.15 ns/op | **hashbrown** is **1.02x** faster |
+| 262144 | 130.68 ns/op | 137.10 ns/op | **hashbrown** is **1.05x** faster |
+
+
+### Benchmark: `collect_find_preallocated` | Item Type: `LargeTestItem`
+
+| Size  | hashbrown    | hop_hash     | Comparison                        |
+| ----- | ------------ | ------------ | --------------------------------- |
+| 1024  | 37.75 ns/op  | 52.08 ns/op  | **hashbrown** is **1.38x** faster |
+| 2048  | 90.71 ns/op  | 106.52 ns/op | **hashbrown** is **1.17x** faster |
+| 4096  | 93.71 ns/op  | 109.86 ns/op | **hashbrown** is **1.17x** faster |
+| 8192  | 92.87 ns/op  | 103.95 ns/op | **hashbrown** is **1.12x** faster |
+| 16384 | 103.21 ns/op | 117.65 ns/op | **hashbrown** is **1.14x** faster |
+| 32768 | 118.07 ns/op | 135.81 ns/op | **hashbrown** is **1.15x** faster |
+
+
+### Benchmark: `collect_find_preallocated` | Item Type: `TestItem`
+
+| Size   | hashbrown   | hop_hash    | Comparison                        |
+| ------ | ----------- | ----------- | --------------------------------- |
+| 1024   | 9.55 ns/op  | 12.43 ns/op | **hashbrown** is **1.30x** faster |
+| 2048   | 9.86 ns/op  | 13.22 ns/op | **hashbrown** is **1.34x** faster |
+| 4096   | 11.00 ns/op | 14.61 ns/op | **hashbrown** is **1.33x** faster |
+| 8192   | 12.26 ns/op | 15.86 ns/op | **hashbrown** is **1.29x** faster |
+| 16384  | 23.78 ns/op | 27.11 ns/op | **hashbrown** is **1.14x** faster |
+| 32768  | 28.66 ns/op | 31.65 ns/op | **hashbrown** is **1.10x** faster |
+| 65536  | 42.87 ns/op | 48.47 ns/op | **hashbrown** is **1.13x** faster |
+| 131072 | 60.73 ns/op | 72.29 ns/op | **hashbrown** is **1.19x** faster |
+| 262144 | 79.33 ns/op | 91.84 ns/op | **hashbrown** is **1.16x** faster |
+
+
+### Benchmark: `drain` | Item Type: `LargeTestItem`
+
+| Size  | hashbrown   | hop_hash    | Comparison                        |
+| ----- | ----------- | ----------- | --------------------------------- |
+| 1024  | 29.23 ns/op | 24.90 ns/op | **hop_hash** is **1.17x** faster  |
+| 2048  | 24.99 ns/op | 30.87 ns/op | **hashbrown** is **1.24x** faster |
+| 4096  | 24.27 ns/op | 26.31 ns/op | **hashbrown** is **1.08x** faster |
+| 8192  | 28.81 ns/op | 20.76 ns/op | **hop_hash** is **1.39x** faster  |
+| 16384 | 54.06 ns/op | 29.31 ns/op | **hop_hash** is **1.84x** faster  |
+| 32768 | 93.34 ns/op | 63.70 ns/op | **hop_hash** is **1.47x** faster  |
+
+
+### Benchmark: `drain` | Item Type: `TestItem`
+
+| Size   | hashbrown   | hop_hash    | Comparison                       |
+| ------ | ----------- | ----------- | -------------------------------- |
+| 1024   | 13.19 ns/op | 11.55 ns/op | **hop_hash** is **1.14x** faster |
+| 2048   | 13.30 ns/op | 11.14 ns/op | **hop_hash** is **1.19x** faster |
+| 4096   | 13.45 ns/op | 11.15 ns/op | **hop_hash** is **1.21x** faster |
+| 8192   | 14.15 ns/op | 11.98 ns/op | **hop_hash** is **1.18x** faster |
+| 16384  | 16.21 ns/op | 12.29 ns/op | **hop_hash** is **1.32x** faster |
+| 32768  | 18.21 ns/op | 13.11 ns/op | **hop_hash** is **1.39x** faster |
+| 65536  | 21.25 ns/op | 14.34 ns/op | **hop_hash** is **1.48x** faster |
+| 131072 | 42.96 ns/op | 33.51 ns/op | **hop_hash** is **1.28x** faster |
+| 262144 | 77.76 ns/op | 70.31 ns/op | **hop_hash** is **1.11x** faster |
+
+
+### Benchmark: `find_hit` | Item Type: `LargeTestItem`
+
+| Size  | hashbrown    | hop_hash     | Comparison                        |
+| ----- | ------------ | ------------ | --------------------------------- |
+| 1024  | 35.63 ns/op  | 36.67 ns/op  | **hashbrown** is **1.03x** faster |
+| 2048  | 49.15 ns/op  | 52.05 ns/op  | **hashbrown** is **1.06x** faster |
+| 4096  | 60.78 ns/op  | 63.78 ns/op  | **hashbrown** is **1.05x** faster |
+| 8192  | 89.30 ns/op  | 87.50 ns/op  | **hop_hash** is **1.02x** faster  |
+| 16384 | 91.69 ns/op  | 94.37 ns/op  | **hashbrown** is **1.03x** faster |
+| 32768 | 128.57 ns/op | 128.38 ns/op | **hop_hash** is **1.00x** faster  |
+
+
+### Benchmark: `find_hit` | Item Type: `TestItem`
+
+| Size   | hashbrown    | hop_hash     | Comparison                        |
+| ------ | ------------ | ------------ | --------------------------------- |
+| 1024   | 14.76 ns/op  | 15.82 ns/op  | **hashbrown** is **1.07x** faster |
+| 2048   | 15.68 ns/op  | 16.32 ns/op  | **hashbrown** is **1.04x** faster |
+| 4096   | 18.02 ns/op  | 19.62 ns/op  | **hashbrown** is **1.09x** faster |
+| 8192   | 25.29 ns/op  | 27.56 ns/op  | **hashbrown** is **1.09x** faster |
+| 16384  | 25.81 ns/op  | 27.45 ns/op  | **hashbrown** is **1.06x** faster |
+| 32768  | 40.19 ns/op  | 45.57 ns/op  | **hashbrown** is **1.13x** faster |
+| 65536  | 61.09 ns/op  | 67.14 ns/op  | **hashbrown** is **1.10x** faster |
+| 131072 | 96.35 ns/op  | 108.55 ns/op | **hashbrown** is **1.13x** faster |
+| 262144 | 125.19 ns/op | 140.79 ns/op | **hashbrown** is **1.12x** faster |
+
+
+### Benchmark: `find_hit_miss` | Item Type: `LargeTestItem`
+
+| Size  | hashbrown    | hop_hash     | Comparison                        |
+| ----- | ------------ | ------------ | --------------------------------- |
+| 1024  | 40.14 ns/op  | 35.04 ns/op  | **hop_hash** is **1.15x** faster  |
+| 2048  | 51.82 ns/op  | 54.41 ns/op  | **hashbrown** is **1.05x** faster |
+| 4096  | 58.89 ns/op  | 62.58 ns/op  | **hashbrown** is **1.06x** faster |
+| 8192  | 82.01 ns/op  | 70.24 ns/op  | **hop_hash** is **1.17x** faster  |
+| 16384 | 71.81 ns/op  | 88.74 ns/op  | **hashbrown** is **1.24x** faster |
+| 32768 | 104.57 ns/op | 111.51 ns/op | **hashbrown** is **1.07x** faster |
+
+
+### Benchmark: `find_hit_miss` | Item Type: `TestItem`
+
+| Size   | hashbrown    | hop_hash     | Comparison                        |
+| ------ | ------------ | ------------ | --------------------------------- |
+| 1024   | 19.46 ns/op  | 20.43 ns/op  | **hashbrown** is **1.05x** faster |
+| 2048   | 20.84 ns/op  | 20.96 ns/op  | **hashbrown** is **1.01x** faster |
+| 4096   | 22.31 ns/op  | 22.43 ns/op  | **hashbrown** is **1.01x** faster |
+| 8192   | 29.66 ns/op  | 23.50 ns/op  | **hop_hash** is **1.26x** faster  |
+| 16384  | 26.51 ns/op  | 27.40 ns/op  | **hashbrown** is **1.03x** faster |
+| 32768  | 40.98 ns/op  | 30.53 ns/op  | **hop_hash** is **1.34x** faster  |
+| 65536  | 47.31 ns/op  | 58.94 ns/op  | **hashbrown** is **1.25x** faster |
+| 131072 | 78.45 ns/op  | 97.88 ns/op  | **hashbrown** is **1.25x** faster |
+| 262144 | 105.50 ns/op | 122.03 ns/op | **hashbrown** is **1.16x** faster |
+
+
+### Benchmark: `find_miss` | Item Type: `LargeTestItem`
+
+| Size  | hashbrown   | hop_hash    | Comparison                        |
+| ----- | ----------- | ----------- | --------------------------------- |
+| 1024  | 32.08 ns/op | 35.66 ns/op | **hashbrown** is **1.11x** faster |
+| 2048  | 54.59 ns/op | 55.40 ns/op | **hashbrown** is **1.01x** faster |
+| 4096  | 58.13 ns/op | 62.05 ns/op | **hashbrown** is **1.07x** faster |
+| 8192  | 62.03 ns/op | 58.50 ns/op | **hop_hash** is **1.06x** faster  |
+| 16384 | 60.81 ns/op | 69.48 ns/op | **hashbrown** is **1.14x** faster |
+| 32768 | 88.34 ns/op | 97.17 ns/op | **hashbrown** is **1.10x** faster |
+
+
+### Benchmark: `find_miss` | Item Type: `TestItem`
+
+| Size   | hashbrown   | hop_hash    | Comparison                        |
+| ------ | ----------- | ----------- | --------------------------------- |
+| 1024   | 18.31 ns/op | 20.21 ns/op | **hashbrown** is **1.10x** faster |
+| 2048   | 22.14 ns/op | 21.39 ns/op | **hop_hash** is **1.03x** faster  |
+| 4096   | 21.72 ns/op | 21.01 ns/op | **hop_hash** is **1.03x** faster  |
+| 8192   | 21.33 ns/op | 22.20 ns/op | **hashbrown** is **1.04x** faster |
+| 16384  | 24.61 ns/op | 23.55 ns/op | **hop_hash** is **1.04x** faster  |
+| 32768  | 29.33 ns/op | 29.15 ns/op | **hop_hash** is **1.01x** faster  |
+| 65536  | 38.09 ns/op | 48.32 ns/op | **hashbrown** is **1.27x** faster |
+| 131072 | 61.59 ns/op | 71.51 ns/op | **hashbrown** is **1.16x** faster |
+| 262144 | 82.78 ns/op | 89.62 ns/op | **hashbrown** is **1.08x** faster |
+
+
+### Benchmark: `insert_random` | Item Type: `LargeTestItem`
+
+| Size  | hashbrown    | hop_hash     | Comparison                       |
+| ----- | ------------ | ------------ | -------------------------------- |
+| 1024  | 81.98 ns/op  | 81.29 ns/op  | **hop_hash** is **1.01x** faster |
+| 2048  | 168.95 ns/op | 143.32 ns/op | **hop_hash** is **1.18x** faster |
+| 4096  | 218.79 ns/op | 168.53 ns/op | **hop_hash** is **1.30x** faster |
+| 8192  | 248.23 ns/op | 190.97 ns/op | **hop_hash** is **1.30x** faster |
+| 16384 | 284.73 ns/op | 220.71 ns/op | **hop_hash** is **1.29x** faster |
+| 32768 | 325.79 ns/op | 256.77 ns/op | **hop_hash** is **1.27x** faster |
+
+
+### Benchmark: `insert_random` | Item Type: `TestItem`
+
+| Size   | hashbrown    | hop_hash     | Comparison                        |
+| ------ | ------------ | ------------ | --------------------------------- |
+| 1024   | 22.08 ns/op  | 25.39 ns/op  | **hashbrown** is **1.15x** faster |
+| 2048   | 22.02 ns/op  | 27.58 ns/op  | **hashbrown** is **1.25x** faster |
+| 4096   | 23.08 ns/op  | 29.74 ns/op  | **hashbrown** is **1.29x** faster |
+| 8192   | 24.63 ns/op  | 32.66 ns/op  | **hashbrown** is **1.33x** faster |
+| 16384  | 38.02 ns/op  | 41.86 ns/op  | **hashbrown** is **1.10x** faster |
+| 32768  | 46.25 ns/op  | 45.22 ns/op  | **hop_hash** is **1.02x** faster  |
+| 65536  | 61.04 ns/op  | 55.33 ns/op  | **hop_hash** is **1.10x** faster  |
+| 131072 | 100.91 ns/op | 96.94 ns/op  | **hop_hash** is **1.04x** faster  |
+| 262144 | 140.83 ns/op | 137.96 ns/op | **hop_hash** is **1.02x** faster  |
+
+
+### Benchmark: `insert_random_preallocated` | Item Type: `LargeTestItem`
+
+| Size  | hashbrown    | hop_hash     | Comparison                        |
+| ----- | ------------ | ------------ | --------------------------------- |
+| 1024  | 37.50 ns/op  | 58.47 ns/op  | **hashbrown** is **1.56x** faster |
+| 2048  | 120.76 ns/op | 143.53 ns/op | **hashbrown** is **1.19x** faster |
+| 4096  | 120.47 ns/op | 143.60 ns/op | **hashbrown** is **1.19x** faster |
+| 8192  | 124.90 ns/op | 197.66 ns/op | **hashbrown** is **1.58x** faster |
+| 16384 | 122.93 ns/op | 144.89 ns/op | **hashbrown** is **1.18x** faster |
+| 32768 | 128.94 ns/op | 148.66 ns/op | **hashbrown** is **1.15x** faster |
+
+
+### Benchmark: `insert_random_preallocated` | Item Type: `TestItem`
+
+| Size   | hashbrown   | hop_hash    | Comparison                        |
+| ------ | ----------- | ----------- | --------------------------------- |
+| 1024   | 5.39 ns/op  | 10.67 ns/op | **hashbrown** is **1.98x** faster |
+| 2048   | 5.26 ns/op  | 10.74 ns/op | **hashbrown** is **2.04x** faster |
+| 4096   | 5.93 ns/op  | 11.44 ns/op | **hashbrown** is **1.93x** faster |
+| 8192   | 8.07 ns/op  | 42.39 ns/op | **hashbrown** is **5.26x** faster |
+| 16384  | 27.84 ns/op | 35.41 ns/op | **hashbrown** is **1.27x** faster |
+| 32768  | 28.76 ns/op | 31.10 ns/op | **hashbrown** is **1.08x** faster |
+| 65536  | 28.10 ns/op | 31.24 ns/op | **hashbrown** is **1.11x** faster |
+| 131072 | 33.78 ns/op | 37.34 ns/op | **hashbrown** is **1.11x** faster |
+| 262144 | 36.91 ns/op | 43.60 ns/op | **hashbrown** is **1.18x** faster |
+
+
+### Benchmark: `iteration` | Item Type: `LargeTestItem`
+
+| Size  | hashbrown  | hop_hash   | Comparison                       |
+| ----- | ---------- | ---------- | -------------------------------- |
+| 1024  | 1.37 ns/op | 0.42 ns/op | **hop_hash** is **3.27x** faster |
+| 2048  | 1.38 ns/op | 0.40 ns/op | **hop_hash** is **3.43x** faster |
+| 4096  | 1.39 ns/op | 0.40 ns/op | **hop_hash** is **3.48x** faster |
+| 8192  | 1.38 ns/op | 0.40 ns/op | **hop_hash** is **3.47x** faster |
+| 16384 | 1.38 ns/op | 0.41 ns/op | **hop_hash** is **3.39x** faster |
+| 32768 | 1.39 ns/op | 0.42 ns/op | **hop_hash** is **3.30x** faster |
+
+
+### Benchmark: `iteration` | Item Type: `TestItem`
+
+| Size   | hashbrown  | hop_hash   | Comparison                       |
+| ------ | ---------- | ---------- | -------------------------------- |
+| 1024   | 0.43 ns/op | 0.38 ns/op | **hop_hash** is **1.15x** faster |
+| 2048   | 0.44 ns/op | 0.38 ns/op | **hop_hash** is **1.16x** faster |
+| 4096   | 0.43 ns/op | 0.37 ns/op | **hop_hash** is **1.18x** faster |
+| 8192   | 0.44 ns/op | 0.35 ns/op | **hop_hash** is **1.25x** faster |
+| 16384  | 0.45 ns/op | 0.37 ns/op | **hop_hash** is **1.22x** faster |
+| 32768  | 0.49 ns/op | 0.38 ns/op | **hop_hash** is **1.29x** faster |
+| 65536  | 0.54 ns/op | 0.39 ns/op | **hop_hash** is **1.37x** faster |
+| 131072 | 0.62 ns/op | 0.42 ns/op | **hop_hash** is **1.49x** faster |
+| 262144 | 0.66 ns/op | 0.46 ns/op | **hop_hash** is **1.44x** faster |
+
+
+### Benchmark: `mixed_probabilistic` | Item Type: `LargeTestItem`
+
+| Size  | hashbrown    | hop_hash     | Comparison                       |
+| ----- | ------------ | ------------ | -------------------------------- |
+| 1024  | 426.03 ns/op | 399.20 ns/op | **hop_hash** is **1.07x** faster |
+| 2048  | 438.03 ns/op | 408.05 ns/op | **hop_hash** is **1.07x** faster |
+| 4096  | 436.45 ns/op | 408.73 ns/op | **hop_hash** is **1.07x** faster |
+| 8192  | 451.81 ns/op | 412.49 ns/op | **hop_hash** is **1.10x** faster |
+| 16384 | 474.55 ns/op | 430.95 ns/op | **hop_hash** is **1.10x** faster |
+| 32768 | 491.22 ns/op | 452.52 ns/op | **hop_hash** is **1.09x** faster |
+
+
+### Benchmark: `mixed_probabilistic` | Item Type: `TestItem`
+
+| Size   | hashbrown    | hop_hash     | Comparison                        |
+| ------ | ------------ | ------------ | --------------------------------- |
+| 1024   | 167.83 ns/op | 167.88 ns/op | **hashbrown** is **1.00x** faster |
+| 2048   | 168.49 ns/op | 167.82 ns/op | **hop_hash** is **1.00x** faster  |
+| 4096   | 170.06 ns/op | 169.12 ns/op | **hop_hash** is **1.01x** faster  |
+| 8192   | 177.85 ns/op | 170.85 ns/op | **hop_hash** is **1.04x** faster  |
+| 16384  | 179.24 ns/op | 173.21 ns/op | **hop_hash** is **1.03x** faster  |
+| 32768  | 179.10 ns/op | 173.38 ns/op | **hop_hash** is **1.03x** faster  |
+| 65536  | 193.44 ns/op | 183.81 ns/op | **hop_hash** is **1.05x** faster  |
+| 131072 | 217.55 ns/op | 206.12 ns/op | **hop_hash** is **1.06x** faster  |
+| 262144 | 247.12 ns/op | 235.01 ns/op | **hop_hash** is **1.05x** faster  |
+
+
+### Benchmark: `mixed_probabilistic_zipf_1.0` | Item Type: `LargeTestItem`
+
+| Size  | hashbrown    | hop_hash     | Comparison                       |
+| ----- | ------------ | ------------ | -------------------------------- |
+| 1024  | 430.89 ns/op | 405.49 ns/op | **hop_hash** is **1.06x** faster |
+| 2048  | 444.08 ns/op | 410.61 ns/op | **hop_hash** is **1.08x** faster |
+| 4096  | 445.81 ns/op | 411.23 ns/op | **hop_hash** is **1.08x** faster |
+| 8192  | 458.02 ns/op | 418.05 ns/op | **hop_hash** is **1.10x** faster |
+| 16384 | 482.80 ns/op | 436.82 ns/op | **hop_hash** is **1.11x** faster |
+| 32768 | 658.46 ns/op | 450.26 ns/op | **hop_hash** is **1.46x** faster |
+
+
+### Benchmark: `mixed_probabilistic_zipf_1.0` | Item Type: `TestItem`
+
+| Size   | hashbrown    | hop_hash     | Comparison                        |
+| ------ | ------------ | ------------ | --------------------------------- |
+| 1024   | 168.95 ns/op | 169.16 ns/op | **hashbrown** is **1.00x** faster |
+| 2048   | 170.04 ns/op | 166.76 ns/op | **hop_hash** is **1.02x** faster  |
+| 4096   | 170.28 ns/op | 167.10 ns/op | **hop_hash** is **1.02x** faster  |
+| 8192   | 176.68 ns/op | 168.68 ns/op | **hop_hash** is **1.05x** faster  |
+| 16384  | 178.00 ns/op | 170.44 ns/op | **hop_hash** is **1.04x** faster  |
+| 32768  | 177.45 ns/op | 173.57 ns/op | **hop_hash** is **1.02x** faster  |
+| 65536  | 191.70 ns/op | 179.60 ns/op | **hop_hash** is **1.07x** faster  |
+| 131072 | 216.76 ns/op | 211.21 ns/op | **hop_hash** is **1.03x** faster  |
+| 262144 | 250.98 ns/op | 234.73 ns/op | **hop_hash** is **1.07x** faster  |
+
+
+### Benchmark: `mixed_probabilistic_zipf_1.3` | Item Type: `LargeTestItem`
+
+| Size  | hashbrown    | hop_hash     | Comparison                       |
+| ----- | ------------ | ------------ | -------------------------------- |
+| 1024  | 434.90 ns/op | 404.96 ns/op | **hop_hash** is **1.07x** faster |
+| 2048  | 442.85 ns/op | 406.77 ns/op | **hop_hash** is **1.09x** faster |
+| 4096  | 447.31 ns/op | 407.15 ns/op | **hop_hash** is **1.10x** faster |
+| 8192  | 467.58 ns/op | 416.85 ns/op | **hop_hash** is **1.12x** faster |
+| 16384 | 485.15 ns/op | 432.85 ns/op | **hop_hash** is **1.12x** faster |
+| 32768 | 500.76 ns/op | 447.54 ns/op | **hop_hash** is **1.12x** faster |
+
+
+### Benchmark: `mixed_probabilistic_zipf_1.3` | Item Type: `TestItem`
+
+| Size   | hashbrown    | hop_hash     | Comparison                       |
+| ------ | ------------ | ------------ | -------------------------------- |
+| 1024   | 164.06 ns/op | 163.90 ns/op | **hop_hash** is **1.00x** faster |
+| 2048   | 164.88 ns/op | 164.25 ns/op | **hop_hash** is **1.00x** faster |
+| 4096   | 169.29 ns/op | 165.66 ns/op | **hop_hash** is **1.02x** faster |
+| 8192   | 176.60 ns/op | 169.09 ns/op | **hop_hash** is **1.04x** faster |
+| 16384  | 175.35 ns/op | 171.07 ns/op | **hop_hash** is **1.03x** faster |
+| 32768  | 177.38 ns/op | 174.13 ns/op | **hop_hash** is **1.02x** faster |
+| 65536  | 190.02 ns/op | 182.24 ns/op | **hop_hash** is **1.04x** faster |
+| 131072 | 217.14 ns/op | 208.16 ns/op | **hop_hash** is **1.04x** faster |
+| 262144 | 250.32 ns/op | 241.93 ns/op | **hop_hash** is **1.03x** faster |
+
+
+### Benchmark: `mixed_probabilistic_zipf_1.8` | Item Type: `LargeTestItem`
+
+| Size  | hashbrown    | hop_hash     | Comparison                       |
+| ----- | ------------ | ------------ | -------------------------------- |
+| 1024  | 426.13 ns/op | 400.27 ns/op | **hop_hash** is **1.06x** faster |
+| 2048  | 442.20 ns/op | 405.11 ns/op | **hop_hash** is **1.09x** faster |
+| 4096  | 448.31 ns/op | 405.21 ns/op | **hop_hash** is **1.11x** faster |
+| 8192  | 460.55 ns/op | 413.17 ns/op | **hop_hash** is **1.11x** faster |
+| 16384 | 483.36 ns/op | 431.05 ns/op | **hop_hash** is **1.12x** faster |
+| 32768 | 503.63 ns/op | 452.15 ns/op | **hop_hash** is **1.11x** faster |
+
+
+### Benchmark: `mixed_probabilistic_zipf_1.8` | Item Type: `TestItem`
+
+| Size   | hashbrown    | hop_hash     | Comparison                        |
+| ------ | ------------ | ------------ | --------------------------------- |
+| 1024   | 165.22 ns/op | 163.25 ns/op | **hop_hash** is **1.01x** faster  |
+| 2048   | 161.73 ns/op | 163.56 ns/op | **hashbrown** is **1.01x** faster |
+| 4096   | 165.27 ns/op | 165.68 ns/op | **hashbrown** is **1.00x** faster |
+| 8192   | 172.56 ns/op | 167.69 ns/op | **hop_hash** is **1.03x** faster  |
+| 16384  | 172.95 ns/op | 169.76 ns/op | **hop_hash** is **1.02x** faster  |
+| 32768  | 175.03 ns/op | 170.08 ns/op | **hop_hash** is **1.03x** faster  |
+| 65536  | 187.73 ns/op | 182.07 ns/op | **hop_hash** is **1.03x** faster  |
+| 131072 | 217.47 ns/op | 208.20 ns/op | **hop_hash** is **1.04x** faster  |
+| 262144 | 246.75 ns/op | 237.85 ns/op | **hop_hash** is **1.04x** faster  |
+
+
+### Benchmark: `mixed_workload` | Item Type: `LargeTestItem`
+
+| Size  | hashbrown    | hop_hash     | Comparison                       |
+| ----- | ------------ | ------------ | -------------------------------- |
+| 1024  | 159.56 ns/op | 78.04 ns/op  | **hop_hash** is **2.04x** faster |
+| 2048  | 233.82 ns/op | 129.00 ns/op | **hop_hash** is **1.81x** faster |
+| 4096  | 273.95 ns/op | 188.12 ns/op | **hop_hash** is **1.46x** faster |
+| 8192  | 357.19 ns/op | 208.69 ns/op | **hop_hash** is **1.71x** faster |
+| 16384 | 429.71 ns/op | 260.19 ns/op | **hop_hash** is **1.65x** faster |
+| 32768 | 483.63 ns/op | 305.44 ns/op | **hop_hash** is **1.58x** faster |
+
+
+### Benchmark: `mixed_workload` | Item Type: `TestItem`
+
+| Size   | hashbrown    | hop_hash     | Comparison                        |
+| ------ | ------------ | ------------ | --------------------------------- |
+| 1024   | 40.71 ns/op  | 40.15 ns/op  | **hop_hash** is **1.01x** faster  |
+| 2048   | 42.33 ns/op  | 42.92 ns/op  | **hashbrown** is **1.01x** faster |
+| 4096   | 46.74 ns/op  | 45.44 ns/op  | **hop_hash** is **1.03x** faster  |
+| 8192   | 59.69 ns/op  | 47.94 ns/op  | **hop_hash** is **1.25x** faster  |
+| 16384  | 69.58 ns/op  | 54.35 ns/op  | **hop_hash** is **1.28x** faster  |
+| 32768  | 97.14 ns/op  | 72.63 ns/op  | **hop_hash** is **1.34x** faster  |
+| 65536  | 161.17 ns/op | 122.59 ns/op | **hop_hash** is **1.31x** faster  |
+| 131072 | 231.71 ns/op | 179.94 ns/op | **hop_hash** is **1.29x** faster  |
+| 262144 | 287.69 ns/op | 237.77 ns/op | **hop_hash** is **1.21x** faster  |
+
+
+### Benchmark: `remove` | Item Type: `LargeTestItem`
+
+| Size  | hashbrown    | hop_hash     | Comparison                        |
+| ----- | ------------ | ------------ | --------------------------------- |
+| 1024  | 88.71 ns/op  | 97.36 ns/op  | **hashbrown** is **1.10x** faster |
+| 2048  | 127.72 ns/op | 134.10 ns/op | **hashbrown** is **1.05x** faster |
+| 4096  | 103.93 ns/op | 113.75 ns/op | **hashbrown** is **1.09x** faster |
+| 8192  | 79.05 ns/op  | 90.43 ns/op  | **hashbrown** is **1.14x** faster |
+| 16384 | 196.53 ns/op | 205.83 ns/op | **hashbrown** is **1.05x** faster |
+| 32768 | 281.28 ns/op | 298.22 ns/op | **hashbrown** is **1.06x** faster |
+
+
+### Benchmark: `remove` | Item Type: `TestItem`
+
+| Size   | hashbrown    | hop_hash     | Comparison                        |
+| ------ | ------------ | ------------ | --------------------------------- |
+| 1024   | 25.62 ns/op  | 26.69 ns/op  | **hashbrown** is **1.04x** faster |
+| 2048   | 26.45 ns/op  | 27.86 ns/op  | **hashbrown** is **1.05x** faster |
+| 4096   | 27.36 ns/op  | 29.26 ns/op  | **hashbrown** is **1.07x** faster |
+| 8192   | 30.16 ns/op  | 32.71 ns/op  | **hashbrown** is **1.08x** faster |
+| 16384  | 36.01 ns/op  | 37.67 ns/op  | **hashbrown** is **1.05x** faster |
+| 32768  | 39.66 ns/op  | 41.69 ns/op  | **hashbrown** is **1.05x** faster |
+| 65536  | 83.56 ns/op  | 87.00 ns/op  | **hashbrown** is **1.04x** faster |
+| 131072 | 163.32 ns/op | 175.57 ns/op | **hashbrown** is **1.07x** faster |
+| 262144 | 204.16 ns/op | 222.00 ns/op | **hashbrown** is **1.09x** faster |
