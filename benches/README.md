@@ -15,8 +15,13 @@ In all cases, Hashbrown is represented with the red line, and Hop-hash is repres
 - Default release profile
 - Default features
 - SipHash hasher
-- Value-type is a String of length 20, generated randomly + a u64. The String is used as the key for
+- Value-type is a String of length 20, generated arbitrarily + a u64. The String is used as the key for
   hashing and comparisons.
+  - Data is pre-generated for a benchmark and then used for all iterations of that benchmark for
+    both hashbrown and hop-hash. This ensures that they're running on identical data. The initial
+    data is pre-hashed before any insertion/find/etc. to try to exclude hashing time from the
+    benchmarks as much as possible (some rehashing still occurs during table growth, but this seems
+    like a fair thing to benchmark).
   - The benchmark suite does include large/small value types, but those charts are not shown here for
     brevity. In general, the _relative_ performance of Hop-hash decreases for small value types, and
     increases for large value types.
