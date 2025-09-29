@@ -17,7 +17,7 @@ In all cases, Hashbrown is represented with the red line, and Hop-hash is repres
 - SipHash hasher
 - Value-type is a String of length 20, generated randomly + a u64. The String is used as the key for
   hashing and comparisons.
-  - The benchmark suite does include large/small value types, but these are not shown here for
+  - The benchmark suite does include large/small value types, but those charts are not shown here for
     brevity. In general, the _relative_ performance of Hop-hash decreases for small value types, and
     increases for large value types.
 
@@ -256,8 +256,7 @@ of 87.5%.
 | 4096  | 445.81 ns/op | 411.23 ns/op | **hop_hash** is **1.08x** faster |
 | 8192  | 458.02 ns/op | 418.05 ns/op | **hop_hash** is **1.10x** faster |
 | 16384 | 482.80 ns/op | 436.82 ns/op | **hop_hash** is **1.11x** faster |
-| 32768 | 658.46 ns/op | 450.26 ns/op | **hop_hash** is **1.46x** faster |
-
+| 32768 | 512.27 ns/op | 445.49 ns/op | **hop_hash** is **1.15x** faster |
 
 ### Benchmark: `mixed_probabilistic_zipf_1.0` | Item Type: `TestItem`
 
@@ -389,7 +388,7 @@ of 87.5%.
 | 1024  | 40.14 ns/op  | 35.04 ns/op  | **hop_hash** is **1.15x** faster  |
 | 2048  | 51.82 ns/op  | 54.41 ns/op  | **hashbrown** is **1.05x** faster |
 | 4096  | 58.89 ns/op  | 62.58 ns/op  | **hashbrown** is **1.06x** faster |
-| 8192  | 82.01 ns/op  | 70.24 ns/op  | **hop_hash** is **1.17x** faster  |
+| 8192  | 58.47 ns/op  | 61.98 ns/op  | **hashbrown** is **1.06x** faster |
 | 16384 | 71.81 ns/op  | 88.74 ns/op  | **hashbrown** is **1.24x** faster |
 | 32768 | 104.57 ns/op | 111.51 ns/op | **hashbrown** is **1.07x** faster |
 
@@ -401,7 +400,7 @@ of 87.5%.
 | 1024   | 19.46 ns/op  | 20.43 ns/op  | **hashbrown** is **1.05x** faster |
 | 2048   | 20.84 ns/op  | 20.96 ns/op  | **hashbrown** is **1.01x** faster |
 | 4096   | 22.31 ns/op  | 22.43 ns/op  | **hashbrown** is **1.01x** faster |
-| 8192   | 29.66 ns/op  | 23.50 ns/op  | **hop_hash** is **1.26x** faster  |
+| 8192   | 22.21 ns/op  | 23.62 ns/op  | **hashbrown** is **1.06x** faster |
 | 16384  | 26.51 ns/op  | 27.40 ns/op  | **hashbrown** is **1.03x** faster |
 | 32768  | 40.98 ns/op  | 30.53 ns/op  | **hop_hash** is **1.34x** faster  |
 | 65536  | 47.31 ns/op  | 58.94 ns/op  | **hashbrown** is **1.25x** faster |
