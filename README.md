@@ -26,6 +26,31 @@ This crate provides `HashMap` and `HashSet` implementations built on top of a lo
   scenarios.
 - **Few Dependencies**: Pure Rust implementation with one external dependency (`cfg-if`).
 
+## Choosing a Neighborhood Size
+The default choice of a 16-entry neighborhood balances performance and memory usage effectively. A
+smaller neighborhood (e.g., 8 entries, via the `eight-way` feature) would reduce the fixed memory
+overhead of the padding buckets and put a tighter bound on maximum probe length, but it has a
+slightly increased risk of the table over-allocating space due to failed attempts to bubble an empty
+slot into the neighborhood.
+
+In benchmarks, the choice of neighborhood size (8 vs 16) has a negligible impact on performance for
+larger tables, but can greatly improve performance for small tables. You should use 8-entry
+neighborhoods if you want to minimize your worst-case probe length and are okay with a slightly
+increased risk of over-allocation or are using smaller tables.
+
+## Choosing a Target Load Factor
+The default target load factor of 92% (`density-ninety-two` feature) is chosen to balance memory
+efficiency and performance. If you prioritize memory efficiency and are willing to accept a slight
+performance trade-off, you might consider using a target load factor of 97% (`density-ninety-seven`
+feature). This trades about 3-5% performance for about 5% decreased memory usage in benchmarks. Note
+that when combined with the `eight-way` feature, you significantly increase the risk of
+over-allocation, so be careful combining those two features if you are trying to conserve memory.
+
+## Probe Length Debugging
+The `HashTable` struct includes a `probe_histogram` method (feature `stats`) that returns a
+histogram of probe lengths for all entries in the table. This can be useful for debugging and
+performance tuning, as it provides insight into how well the hash function is distributing entries.
+
 ## Design
 
 `hop-hash` combines several design principles for high performance.
@@ -66,6 +91,15 @@ collisions), it is stored in a separate overflow vector. This is a safety measur
 infinite resize loop and out-of-memory errors in the face of pathological hash inputs. The odds of
 this overflow being used with a decent hash function are effectively zero.
 
+## Limitations
+
+- **Hash Function Dependency**: Performance is highly dependent on the quality of the hash function.
+  A poor hash function can lead to increased collisions and degrade performance. That being said,
+  this table design is more resilient to poor hash functions than many other designs.
+- **Memory Usage**: The table's capacity grows in powers of two and is not optimized for very small
+  data sets due to a minimum reservation size (a minimum of 272 entries for 16-way, 144 for 8-way).
+- **Key Constraints**: The `Eq` and `Hash` implementations for keys must be consistent.
+
 ## Implementation Notes & Quirks
 Some non-obvious micro-optimizations are used to improve performance:
 
@@ -79,40 +113,6 @@ Some non-obvious micro-optimizations are used to improve performance:
   revealed that this bucket is almost always occupied, and checking it first skips the overhead of
   looking up the neighborhood info, improving performance for the common case where an item is in
   its ideal bucket.
-
-## Choosing a Neighborhood Size
-The default choice of a 16-entry neighborhood balances performance and memory usage effectively. A
-smaller neighborhood (e.g., 8 entries, via the `eight-way` feature) would reduce the fixed memory
-overhead of the padding buckets and put a tighter bound on maximum probe length, but it has a
-slightly increased risk of the table over-allocating space due to failed attempts to bubble an empty
-slot into the neighborhood.
-
-In benchmarks, the choice of neighborhood size (8 vs 16) has a negligible impact on performance for
-larger tables, but can greatly improve performance for small tables. You should use 8-entry
-neighborhoods if you want to minimize your worst-case probe length and are okay with a slightly
-increased risk of over-allocation or are using smaller tables.
-
-## Choosing a Target Load Factor
-The default target load factor of 92% (`density-ninety-two` feature) is chosen to balance memory
-efficiency and performance. If you prioritize memory efficiency and are willing to accept a slight
-performance trade-off, you might consider using a target load factor of 97% (`density-ninety-seven`
-feature). This trades about 3-5% performance for about 5% decreased memory usage in benchmarks. Note
-that when combined with the `eight-way` feature, you significantly increase the risk of
-over-allocation, so be careful combining those two features if you are trying to conserve memory.
-
-## Probe Length Debugging
-The `HashTable` struct includes a `probe_histogram` method (feature `stats`) that returns a
-histogram of probe lengths for all entries in the table. This can be useful for debugging and
-performance tuning, as it provides insight into how well the hash function is distributing entries.
-
-## Limitations
-
-- **Hash Function Dependency**: Performance is highly dependent on the quality of the hash function.
-  A poor hash function can lead to increased collisions and degrade performance. That being said,
-  this table design is more resilient to poor hash functions than many other designs.
-- **Memory Usage**: The table's capacity grows in powers of two and is not optimized for very small
-  data sets due to a minimum reservation size.
-- **Key Constraints**: The `Eq` and `Hash` implementations for keys must be consistent.
 
 ## A Note on Benchmarks
 
