@@ -111,6 +111,35 @@
 //! required to examine the neighbors bitmap when 80-90% of lookups will have a
 //! hit without looking further.
 //!
+//! ## Safety Invariants
+//!
+//! The implementation relies on the following key invariants:
+//!
+//! 1. **Index Bounds**: All indices are validated through the following
+//!    relationships:
+//!    - `hop_bucket <= max_root_mask` (root buckets are valid)
+//!    - `absolute_index = hop_bucket * LANES + offset` where `offset <
+//!      HOP_RANGE * LANES`
+//!    - `max_root_mask = capacity.saturating_sub(HOP_RANGE).wrapping_sub(1)`
+//!      ensures that `hop_bucket + HOP_RANGE` never exceeds allocated bounds
+//!
+//! 2. **Initialization**: A tag value of `EMPTY` indicates an uninitialized
+//!    slot; any other tag value indicates the slot contains an initialized
+//!    value of type `V`.
+//!
+//! 3. **Neighborhood Consistency**: For each entry at absolute index `idx`:
+//!    - Its root bucket is `root = (hash as usize) & max_root_mask`
+//!    - Its neighbor index is `n = (idx - root * LANES) / LANES`
+//!    - `n < HOP_RANGE` (entries are always within their root's neighborhood)
+//!    - `hopmap[root].neighbors[n]` tracks the count of entries in neighbor
+//!      slot `n`
+//!
+//! 4. **Bubbling**: During insertion, empty slots found beyond the neighborhood
+//!    are "bubbled" backward by finding elements that can move forward without
+//!    leaving their own neighborhoods. The invariant `empty_idx >=
+//!    hopmap_index` is maintained throughout (empty slots are always at or
+//!    ahead of the root).
+//!
 //! [`HashMap<K, V>`]: crate::hash_map::HashMap
 //! [`HashSet<V>`]: crate::hash_set::HashSet
 
@@ -217,6 +246,10 @@ unsafe fn find_next_movable_index<V>(
         // and that `empty_idx` is within the bounds of `values`, making
         // `get_unchecked` safe. The caller also ensures that elements in this range
         // are initialized, making `assume_init_ref` safe.
+        // Using `wrapping_sub` because `empty_idx` is guaranteed to be
+        // >= `hopmap_index` by the hopscotch algorithm invariant (empty slots are
+        // always found forward from or at the root bucket position). The wrapping
+        // behavior handles the algebraic calculation without overflow concerns.
         unsafe {
             let hash = rehash(values.get_unchecked(idx).assume_init_ref());
             let hopmap_index = (hash as usize & max_root_mask) * LANES;
@@ -1035,16 +1068,21 @@ impl<V> HashTable<V> {
 
             // SAFETY: We have validated that `index` is within bounds through
             // `search_neighborhood`.
-            let bucket_mut = unsafe { self.buckets_ptr().as_ref().get_unchecked(index) };
+            let bucket_ref = unsafe { self.buckets_ptr().as_ref().get_unchecked(index) };
             // SAFETY: We have confirmed that the value at this index is initialized due to
             // an occupied tag.
-            let value = unsafe { bucket_mut.assume_init_read() };
+            let value = unsafe { bucket_ref.assume_init_read() };
 
+            // SAFETY: `search_neighborhood` guarantees that `index` is within the
+            // neighborhood of `hop_bucket`, which means `index >= hop_bucket * LANES`.
+            // This ensures the subtraction is safe and produces a valid offset.
             let offset = index - hop_bucket * LANES;
             let n_index = offset / LANES;
             // SAFETY: We have validated that `index` is a valid slot index from
-            // `search_neighborhood`, `hop_bucket` is also valid, and `n_index`
-            // is derived from these, ensuring it is a valid neighbor index.
+            // `search_neighborhood`, `hop_bucket` is also valid, `index >= hop_bucket *
+            // LANES` (established by neighborhood invariant), and `n_index <
+            // HOP_RANGE` (derived from the offset), ensuring it is a valid
+            // neighbor index.
             unsafe {
                 self.hopmap_ptr()
                     .as_mut()
@@ -1329,7 +1367,11 @@ impl<V> HashTable<V> {
             || empty_idx.unwrap() >= self.absolute_index(self.max_root_mask + 1 + HOP_RANGE, 0)
         {
             self.resize_rehash(rehash);
-            // SAFETY: We have ensured `hop_bucket` is within the hopmap bounds.
+            // SAFETY: After resizing, the table has a new `max_root_mask`. The call to
+            // `self.hopmap_index(hash)` computes a *new* `hop_bucket` that is valid for
+            // the resized table (guaranteed by `hopmap_index` to be <= new
+            // `max_root_mask`). This new bucket is then safely passed to the
+            // recursive `do_vacant_lookup` call.
             return unsafe { self.do_vacant_lookup(hash, self.hopmap_index(hash), rehash) };
         }
 
@@ -1757,6 +1799,10 @@ impl<V> HashTable<V> {
                 let absolute_empty_idx = match self.find_next_unoccupied(base) {
                     Some(mut idx) => {
                         debug_assert!(!self.is_occupied(idx));
+                        // Bubble the empty slot backward until it's within the neighborhood.
+                        // Loop invariant: `idx` remains a valid slot index throughout, initially
+                        // found by `find_next_unoccupied` and updated by `find_next_movable_index`
+                        // to maintain `idx < absolute_index(max_root_mask + 1 + HOP_RANGE, 0)`.
                         while idx >= self.absolute_index(bucket + HOP_RANGE, 0) {
                             let bubble_base = idx - (HOP_RANGE - 1) * LANES;
 
@@ -2064,12 +2110,17 @@ impl<'a, V> VacantEntry<'a, V> {
             return self.insert_overflow(value);
         }
 
-        // SAFETY: A `VacantEntry` is only constructed by `do_vacant_lookup` with a
-        // valid, unoccupied `n_index` that is guaranteed to be in the hop-neighborhood.
-        // This ensures that `neighbor` is a valid index (< HOP_RANGE) and that the
-        // `target_index` is a valid, unoccupied slot within the table's bounds.
-        // Therefore, the `unsafe` operations (`set`, `set_occupied`,
-        // `get_unchecked_mut`, and `write`) are safe.
+        // SAFETY: A `VacantEntry` is only constructed by `do_vacant_lookup` with:
+        // - A valid `hopmap_root` where `hopmap_root <= max_root_mask`, ensuring it
+        //   indexes a valid root bucket in the hopmap array.
+        // - A valid, unoccupied `n_index` that is guaranteed to be in the
+        //   hop-neighborhood (n_index < HOP_RANGE * LANES), ensuring the entry stays
+        //   within the root's neighborhood.
+        // This guarantees that `neighbor = n_index / LANES` is a valid neighbor index
+        // (< HOP_RANGE) and that `target_index = hopmap_root * LANES + n_index` is a
+        // valid, unoccupied slot within the table's bounds. Therefore, the `unsafe`
+        // operations (`set`, `set_occupied`, `get_unchecked_mut`, and `write`) are
+        // safe.
         unsafe {
             let neighbor = self.n_index / LANES;
             debug_assert!(neighbor < HOP_RANGE);
@@ -2112,6 +2163,15 @@ pub struct OccupiedEntry<'a, V> {
     overflow_index: Option<usize>,
 }
 
+// Safety invariant for OccupiedEntry methods:
+// An `OccupiedEntry` for an in-table element is only created after
+// `search_neighborhood` finds a valid, occupied slot. This guarantees that:
+// 1. The calculated absolute index (`root_index * LANES + n_index`) is within
+//    the bounds of the `buckets` array.
+// 2. The slot is occupied, meaning the `MaybeUninit<V>` contains an initialized
+//    value.
+// Therefore, `get_unchecked`, `get_unchecked_mut`, `assume_init_ref`, and
+// `assume_init_mut` are all safe operations when accessing in-table entries.
 impl<'a, V> OccupiedEntry<'a, V> {
     /// Gets a reference to the value in the entry.
     pub fn get(&self) -> &V {
@@ -2119,13 +2179,7 @@ impl<'a, V> OccupiedEntry<'a, V> {
             return &self.table.overflow[overflow_index];
         }
 
-        // SAFETY: An `OccupiedEntry` for an in-table element is only created after
-        // `search_neighborhood` finds a valid, occupied slot. This guarantees that:
-        // 1. The calculated absolute index (`self.root_index * LANES + self.n_index`)
-        //    is within the bounds of the `buckets` array.
-        // 2. The slot is occupied, meaning the `MaybeUninit<V>` contains an initialized
-        //    value.
-        // Therefore, `get_unchecked` and `assume_init_ref` are safe.
+        // SAFETY: See safety invariant comment above `impl` block.
         unsafe {
             self.table
                 .buckets_ptr()
@@ -2141,13 +2195,7 @@ impl<'a, V> OccupiedEntry<'a, V> {
             return &mut self.table.overflow[overflow_index];
         }
 
-        // SAFETY: An `OccupiedEntry` for an in-table element is only created after
-        // `search_neighborhood` finds a valid, occupied slot. This guarantees that:
-        // 1. The calculated absolute index (`self.root_index * LANES + self.n_index`)
-        //    is within the bounds of the `buckets` array.
-        // 2. The slot is occupied, meaning the `MaybeUninit<V>` contains an initialized
-        //    value.
-        // Therefore, `get_unchecked_mut` and `assume_init_mut` are safe.
+        // SAFETY: See safety invariant comment above `impl` block.
         unsafe {
             self.table
                 .buckets_ptr()
@@ -2164,13 +2212,7 @@ impl<'a, V> OccupiedEntry<'a, V> {
             return &mut self.table.overflow[overflow_index];
         }
 
-        // SAFETY: An `OccupiedEntry` for an in-table element is only created after
-        // `search_neighborhood` finds a valid, occupied slot. This guarantees that:
-        // 1. The calculated absolute index (`self.root_index * LANES + self.n_index`)
-        //    is within the bounds of the `buckets` array.
-        // 2. The slot is occupied, meaning the `MaybeUninit<V>` contains an initialized
-        //    value.
-        // Therefore, `get_unchecked_mut` and `assume_init_mut` are safe.
+        // SAFETY: See safety invariant comment above `impl` block.
         unsafe {
             self.table
                 .buckets_ptr()
