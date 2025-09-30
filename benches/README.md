@@ -125,7 +125,7 @@ at a load factor of 87.5%.
 
 | Size  | hashbrown | hop_hash  | Comparison                        |
 | ----- | --------- | --------- | --------------------------------- |
-| 1024  | 67 ns/op  | 85 ns/op  | **hashbrown** is **1.28x** faster |
+| 1024  | 67 ns/op  | 73 ns/op  | **hashbrown** is **1.10x** faster |
 | 2048  | 125 ns/op | 113 ns/op | **hop_hash** is **1.11x** faster  |
 | 4096  | 156 ns/op | 140 ns/op | **hop_hash** is **1.12x** faster  |
 | 8192  | 170 ns/op | 149 ns/op | **hop_hash** is **1.14x** faster  |

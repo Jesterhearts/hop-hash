@@ -1222,10 +1222,6 @@ impl<V> HashTable<V> {
             } {
                 return Some(slot);
             }
-
-            unsafe {
-                prefetch(self.buckets_ptr().as_ref().as_ptr().add(base + next_index));
-            }
         }
 
         None
@@ -1765,24 +1761,23 @@ impl<V> HashTable<V> {
                 }
 
                 if old_base < capacity.base {
+                    // Prefetch the two possible destination locations for this item.
+                    // Due to power-of-2 mask expansion, an item at old root bucket R will
+                    // hash to either new root bucket R or R + old_max_root.
+                    let old_root_bucket = bucket_index / LANES;
+                    prefetch(self.hopmap_ptr().as_ref().as_ptr().add(old_root_bucket));
                     prefetch(
                         self.hopmap_ptr()
                             .as_ref()
                             .as_ptr()
-                            .add(bucket_index / LANES),
-                    );
-                    prefetch(
-                        self.hopmap_ptr()
-                            .as_ref()
-                            .as_ptr()
-                            .add(bucket_index / LANES + old_base),
+                            .add(old_root_bucket + old_max_root),
                     );
                     prefetch(self.buckets_ptr().as_ref().as_ptr().add(bucket_index));
                     prefetch(
                         self.buckets_ptr()
                             .as_ref()
                             .as_ptr()
-                            .add(bucket_index + old_max_root),
+                            .add(bucket_index + old_max_root * LANES),
                     );
                 }
 
