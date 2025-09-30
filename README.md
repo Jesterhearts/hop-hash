@@ -88,8 +88,9 @@ slightly increased risk of the table over-allocating space due to failed attempt
 slot into the neighborhood.
 
 In benchmarks, the choice of neighborhood size (8 vs 16) has a negligible impact on performance for
-most workloads. You should only use 8-entry neighborhoods if you want to minimize your worst-case
-probe length and are okay with a slightly increased risk of over-allocation.
+larger tables, but can greatly improve performance for small tables. You should use 8-entry
+neighborhoods if you want to minimize your worst-case probe length and are okay with a slightly
+increased risk of over-allocation or are using smaller tables.
 
 ## Choosing a Target Load Factor
 The default target load factor of 92% (`density-ninety-two` feature) is chosen to balance memory

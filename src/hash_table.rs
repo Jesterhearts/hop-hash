@@ -241,6 +241,8 @@ unsafe fn find_next_movable_index<V>(
     max_root_mask: usize,
     rehash: &dyn Fn(&V) -> u64,
 ) -> Option<(usize, u64)> {
+    const PREFETCH_DISTANCE: usize = 4;
+
     for idx in bubble_base..empty_idx {
         // SAFETY: The caller guarantees that `idx` is within `bubble_base..empty_idx`
         // and that `empty_idx` is within the bounds of `values`, making
@@ -251,6 +253,9 @@ unsafe fn find_next_movable_index<V>(
         // always found forward from or at the root bucket position). The wrapping
         // behavior handles the algebraic calculation without overflow concerns.
         unsafe {
+            if idx + PREFETCH_DISTANCE < empty_idx {
+                prefetch(values.as_ptr().add(idx + PREFETCH_DISTANCE));
+            }
             let hash = rehash(values.get_unchecked(idx).assume_init_ref());
             let hopmap_index = (hash as usize & max_root_mask) * LANES;
 
@@ -1178,8 +1183,21 @@ impl<V> HashTable<V> {
             neighborhood_mask ^= 1 << index;
             next_index = neighborhood_mask.trailing_zeros() as usize;
 
+            if neighborhood_mask != 0 {
+                // SAFETY: Caller ensures that `bucket` is within bounds, as it is derived
+                // from the hash and `max_root_mask`.
+                unsafe {
+                    prefetch(
+                        self.tags_ptr()
+                            .as_ref()
+                            .as_ptr()
+                            .add(base + next_index * LANES),
+                    );
+                }
+            }
+
             if index != 0 {
-                let base = bucket * LANES + index * LANES;
+                let base = base + index * LANES;
 
                 // SAFETY: We have ensured `base` is valid, calculated from a validated bucket
                 // and an index within the neighborhood.
@@ -1210,6 +1228,14 @@ impl<V> HashTable<V> {
             next_index = tags.trailing_zeros() as usize;
 
             let slot = base + index;
+
+            // SAFETY: Caller ensures that `base` is within bounds, as it is derived from
+            // a validated bucket and an index within the neighborhood.
+            unsafe {
+                if tags != 0 {
+                    prefetch(self.buckets_ptr().as_ref().as_ptr().add(base + next_index));
+                }
+            }
 
             // SAFETY: We have ensured `slot` is within bounds, as it is calculated from a
             // validated base and index.
