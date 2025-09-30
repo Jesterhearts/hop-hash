@@ -69,15 +69,15 @@ this overflow being used with a decent hash function are effectively zero.
 ## Implementation Notes & Quirks
 Some non-obvious micro-optimizations are used to improve performance:
 
-- **`memset` for Initialization**: The `HopInfo` arrays are initialized using `memset(0)` rather
-  than `alloc_zeroed`. On my machine, this showed a benchmark improvement of up to 30%, and was kept
-  for that reason.
+- **`ptr::write_bytes` for Initialization**: The `HopInfo` arrays are initialized using
+  `ptr::write(0)` rather than `alloc_zeroed`. On my machine, this showed a benchmark improvement of
+  up to 30%, and was kept for that reason.
 - **Load Factor Choice**: The table doesn't support a load factor of 87.5% (7/8). While easy to
   implement, it showed no significant benchmark impact, so the slightly higher memory usage was not
   deemed worth it.
-- **Bucket 0 Optimization**: During lookups, bucket 0 is *always* checked unconditionally. Testing
+- **Bucket 0 Optimization**: During lookups, bucket 0 is _always_ checked unconditionally. Testing
   revealed that this bucket is almost always occupied, and checking it first skips the overhead of
-  looking up the neighborhood bitmap, improving performance for the common case where an item is in
+  looking up the neighborhood info, improving performance for the common case where an item is in
   its ideal bucket.
 
 ## Choosing a Neighborhood Size
@@ -95,12 +95,14 @@ probe length and are okay with a slightly increased risk of over-allocation.
 The default target load factor of 92% (`density-ninety-two` feature) is chosen to balance memory
 efficiency and performance. If you prioritize memory efficiency and are willing to accept a slight
 performance trade-off, you might consider using a target load factor of 97% (`density-ninety-seven`
-feature). This trades about 3-5% performance for about 5% decreased memory usage in benchmarks.
+feature). This trades about 3-5% performance for about 5% decreased memory usage in benchmarks. Note
+that when combined with the `eight-way` feature, you significantly increase the risk of
+over-allocation, so be careful combining those two features if you are trying to conserve memory.
 
 ## Probe Length Debugging
-The `HashTable` struct includes a `probe_histogram` method (test-only) that returns a histogram of
-probe lengths for all entries in the table. This can be useful for debugging and performance tuning,
-as it provides insight into how well the hash function is distributing entries.
+The `HashTable` struct includes a `probe_histogram` method (feature `stats`) that returns a
+histogram of probe lengths for all entries in the table. This can be useful for debugging and
+performance tuning, as it provides insight into how well the hash function is distributing entries.
 
 ## Limitations
 

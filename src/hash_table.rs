@@ -91,9 +91,10 @@
 //!
 //! ### Other Quirks & Oddities
 //!
-//! The table makes use of `memset(0)` to initialize the hopinfo arrays rather
-//! than using `alloc_zeroed`. This makes a massive difference in benchmarks on
-//! my machine (30%) for some reason. I suspect it's a benchmarking artifact.
+//! The table makes use of `ptr::write_bytes(0)` to initialize the hopinfo
+//! arrays rather than using `alloc_zeroed`. This makes a massive difference in
+//! benchmarks on my machine (30%) for some reason. I suspect it's a
+//! benchmarking artifact.
 //!
 //! The table doesn't support 87.5% load (7/8) even though it would be easy to
 //! implement because it doesn't seem to impact benchmarks at all, so
@@ -396,9 +397,7 @@ impl DataLayout {
 }
 
 /// Debug statistics for hash table analysis.
-///
-/// Test-only: compiled only with `cfg(test)`.
-#[cfg(test)]
+#[cfg(feature = "stats")]
 #[derive(Debug, Clone)]
 pub struct DebugStats {
     /// Number of elements currently in the table
@@ -421,7 +420,7 @@ pub struct DebugStats {
     pub wasted_bytes: usize,
 }
 
-#[cfg(test)]
+#[cfg(feature = "stats")]
 impl DebugStats {
     /// Pretty-print the debug statistics.
     #[cfg(feature = "std")]
@@ -454,9 +453,7 @@ impl DebugStats {
 }
 
 /// Probe histogram for analyzing probe lengths.
-///
-/// Test-only: compiled only with `cfg(test)`.
-#[cfg(test)]
+#[cfg(feature = "stats")]
 pub struct ProbeHistogram {
     #[cfg_attr(not(feature = "std"), allow(dead_code))]
     populated: usize,
@@ -487,7 +484,7 @@ pub struct ProbeHistogram {
     pub bucket_distribution: [usize; HOP_RANGE],
 }
 
-#[cfg(test)]
+#[cfg(feature = "stats")]
 impl ProbeHistogram {
     /// Pretty-print the probe histogram.
     #[cfg(feature = "std")]
@@ -789,7 +786,7 @@ impl<V> HashTable<V> {
             alloc,
             overflow: Vec::new(),
             populated: 0,
-            max_pop: target_load_factor(capacity.max_root_mask().wrapping_add(1) * LANES),
+            max_pop: target_load_factor(capacity.base * LANES),
             max_root_mask: capacity.max_root_mask(),
             _phantom: core::marker::PhantomData,
         }
@@ -1672,7 +1669,7 @@ impl<V> HashTable<V> {
         let old_max_root = self.max_root_mask.wrapping_add(1);
         let old_base = old_max_root + HOP_RANGE;
         let old_empty_words = old_base * LANES;
-        self.max_pop = target_load_factor(capacity.max_root_mask().wrapping_add(1) * LANES);
+        self.max_pop = target_load_factor(capacity.base * LANES);
         self.max_root_mask = capacity.max_root_mask();
         if self.populated == 0 {
             // SAFETY: old_layout.layout.size() checked non-zero, old_alloc from valid
@@ -1859,9 +1856,7 @@ impl<V> HashTable<V> {
     /// returns a [`ProbeHistogram`] struct containing detailed statistics
     /// about probe lengths and how entries are distributed relative to
     /// their ideal buckets.
-    ///
-    /// Test-only: compiled only with `cfg(test)`.
-    #[cfg(test)]
+    #[cfg(feature = "stats")]
     pub fn probe_histogram(&self) -> ProbeHistogram {
         let mut probe_hist = ProbeHistogram {
             populated: self.populated,
@@ -1912,9 +1907,7 @@ impl<V> HashTable<V> {
     }
 
     /// Returns detailed performance and utilization statistics for debugging.
-    ///
-    /// Test-only: compiled only with `cfg(test)`.
-    #[cfg(test)]
+    #[cfg(feature = "stats")]
     pub fn debug_stats(&self) -> DebugStats {
         let total_slots = if self.max_root_mask == usize::MAX {
             0
@@ -2787,48 +2780,6 @@ mod tests {
             Entry::Vacant(_) => unreachable!("Entry should be occupied: {:#?}", table),
         };
         *value_ref = "new_value".to_string();
-    }
-
-    #[test]
-    #[cfg_attr(miri, ignore)]
-    #[cfg(feature = "std")]
-    fn histogram_output() {
-        let state = HashState::default();
-        let mut table: HashTable<Item> = HashTable::with_capacity(1 << 19);
-        for k in 0..table.capacity() as u64 {
-            let hash = hash_key(&state, k);
-            match table.entry(hash, |v| v.key == k, |v| hash_key(&state, v.key)) {
-                Entry::Vacant(v) => {
-                    v.insert(Item {
-                        key: k,
-                        value: k as i32,
-                    });
-                }
-                _ => unreachable!(),
-            }
-        }
-
-        println!("Full table stats:");
-        table.probe_histogram().print();
-        table.debug_stats().print();
-
-        table.clear();
-        for k in 0..(table.capacity() / 2) as u64 {
-            let hash = hash_key(&state, k);
-            match table.entry(hash, |v| v.key == k, |v| hash_key(&state, v.key)) {
-                Entry::Vacant(v) => {
-                    v.insert(Item {
-                        key: k,
-                        value: k as i32,
-                    });
-                }
-                _ => unreachable!(),
-            }
-        }
-
-        println!("\nHalf-full table stats:");
-        table.probe_histogram().print();
-        table.debug_stats().print();
     }
 
     #[test]

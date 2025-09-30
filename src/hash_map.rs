@@ -241,19 +241,19 @@ where
     /// #     }
     /// # }
     /// #
-    /// let mut map = HashMap::with_capacity_and_hasher(100, SimpleHasher);
+    /// let mut map = HashMap::with_capacity_and_hasher(1000, SimpleHasher);
     /// map.insert(1, "one");
     /// map.insert(2, "two");
     ///
     /// // The map has a large capacity but only 2 elements
-    /// assert!(map.capacity() >= 100);
+    /// assert!(map.capacity() >= 1000);
     /// assert_eq!(map.len(), 2);
     ///
     /// map.shrink_to_fit();
     ///
     /// // The capacity is now much smaller, but still fits the elements
     /// assert!(map.capacity() >= 2);
-    /// assert!(map.capacity() < 100);
+    /// assert!(map.capacity() < 1000);
     /// assert_eq!(map.len(), 2);
     /// ```
     pub fn shrink_to_fit(&mut self) {

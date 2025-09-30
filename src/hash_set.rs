@@ -235,19 +235,19 @@ where
     /// #     }
     /// # }
     /// #
-    /// let mut set = HashSet::with_capacity_and_hasher(100, SimpleHasher);
+    /// let mut set = HashSet::with_capacity_and_hasher(1000, SimpleHasher);
     /// set.insert(1);
     /// set.insert(2);
     ///
     /// // The set has a large capacity but only 2 elements
-    /// assert!(set.capacity() >= 100);
+    /// assert!(set.capacity() >= 1000);
     /// assert_eq!(set.len(), 2);
     ///
     /// set.shrink_to_fit();
     ///
     /// // The capacity is now much smaller, but still fits the elements
     /// assert!(set.capacity() >= 2);
-    /// assert!(set.capacity() < 100);
+    /// assert!(set.capacity() < 1000);
     /// assert_eq!(set.len(), 2);
     /// ```
     pub fn shrink_to_fit(&mut self) {

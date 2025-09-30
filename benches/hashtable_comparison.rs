@@ -476,18 +476,11 @@ fn bench_find_hit_miss<TestItem: KeyValuePair, const MAX_SIZE: usize>(c: &mut Cr
             })
             .collect::<Vec<(u64, TestItem)>>();
 
-        let mut combined_hash_and_key = Vec::with_capacity(hop_capacity.max(hashbrown_capacity));
-        for i in 0..hop_capacity.max(hashbrown_capacity) {
-            if i % 2 == 0 {
-                combined_hash_and_key
-                    .push((hash_and_item[i / 2].0, Some(hash_and_item[i / 2].1.clone())));
-            } else {
-                combined_hash_and_key.push((
-                    misses_hash_and_key[i / 2].0,
-                    Some(misses_hash_and_key[i / 2].1.clone()),
-                ));
-            }
-        }
+        let combined_hash_and_key = hash_and_item
+            .iter()
+            .zip(misses_hash_and_key.iter())
+            .flat_map(|(a, b)| [a.clone(), b.clone()])
+            .collect::<Vec<_>>();
 
         let mut hop_table = HopHashTable::<TestItem>::with_capacity(*size);
         let mut hashbrown_table = HashbrownHashTable::<TestItem>::with_capacity(*size);
@@ -505,16 +498,13 @@ fn bench_find_hit_miss<TestItem: KeyValuePair, const MAX_SIZE: usize>(c: &mut Cr
         group.bench_function(BenchmarkId::new("hop_hash", size), |b| {
             b.iter_batched(
                 || {
-                    let mut combined_hash_and_key = combined_hash_and_key.clone();
+                    let mut combined_hash_and_key = combined_hash_and_key[..hop_capacity].to_vec();
                     combined_hash_and_key.shuffle(&mut SmallRng::from_os_rng());
                     combined_hash_and_key
                 },
                 |combined_hash_and_key| {
-                    for (hash, key_opt) in combined_hash_and_key.iter().take(hop_capacity) {
-                        let result = match key_opt {
-                            Some(key) => hop_table.find(*hash, |v| v.eq_key(key)),
-                            None => None,
-                        };
+                    for (hash, key) in combined_hash_and_key.iter() {
+                        let result = hop_table.find(*hash, |v| v.eq_key(key));
                         black_box(result);
                     }
                 },
@@ -535,16 +525,14 @@ fn bench_find_hit_miss<TestItem: KeyValuePair, const MAX_SIZE: usize>(c: &mut Cr
         group.bench_function(BenchmarkId::new("hashbrown", size), |b| {
             b.iter_batched(
                 || {
-                    let mut combined_hash_and_key = combined_hash_and_key.clone();
+                    let mut combined_hash_and_key =
+                        combined_hash_and_key[..hashbrown_capacity].to_vec();
                     combined_hash_and_key.shuffle(&mut SmallRng::from_os_rng());
                     combined_hash_and_key
                 },
                 |combined_hash_and_key| {
-                    for (hash, key_opt) in combined_hash_and_key.iter().take(hashbrown_capacity) {
-                        let result = match key_opt {
-                            Some(key) => hashbrown_table.find(*hash, |v| v.eq_key(key)),
-                            None => None,
-                        };
+                    for (hash, key) in combined_hash_and_key.iter() {
+                        let result = hashbrown_table.find(*hash, |v| v.eq_key(key));
                         black_box(result);
                     }
                 },
@@ -562,8 +550,7 @@ fn bench_find_hit<TestItem: KeyValuePair, const MAX_SIZE: usize>(c: &mut Criteri
         let hop_capacity = HopHashTable::<TestItem>::with_capacity(*size).capacity();
         let hashbrown_capacity = HashbrownHashTable::<TestItem>::with_capacity(*size).capacity();
 
-        let hash_and_item = (0..hop_capacity.max(hashbrown_capacity) * 2)
-            .step_by(2)
+        let hash_and_item = (0..hop_capacity.max(hashbrown_capacity))
             .map(|i| {
                 let key = i as u64;
                 let item = TestItem::new(key);
@@ -588,7 +575,7 @@ fn bench_find_hit<TestItem: KeyValuePair, const MAX_SIZE: usize>(c: &mut Criteri
         group.bench_function(BenchmarkId::new("hop_hash", size), |b| {
             b.iter_batched(
                 || {
-                    let mut hash_and_item = hash_and_item.clone();
+                    let mut hash_and_item = hash_and_item[..hop_capacity].to_vec();
                     hash_and_item.shuffle(&mut SmallRng::from_os_rng());
                     hash_and_item
                 },
@@ -615,7 +602,7 @@ fn bench_find_hit<TestItem: KeyValuePair, const MAX_SIZE: usize>(c: &mut Criteri
         group.bench_function(BenchmarkId::new("hashbrown", size), |b| {
             b.iter_batched(
                 || {
-                    let mut hash_and_item = hash_and_item.clone();
+                    let mut hash_and_item = hash_and_item[..hashbrown_capacity].to_vec();
                     hash_and_item.shuffle(&mut SmallRng::from_os_rng());
                     hash_and_item
                 },
@@ -736,27 +723,27 @@ fn bench_remove<TestItem: KeyValuePair, const MAX_SIZE: usize>(c: &mut Criterion
             })
             .collect::<Vec<(u64, TestItem)>>();
 
+        let mut table = HopHashTable::<TestItem>::with_capacity(0);
+        for (hash, item) in hash_and_item.iter().take(hop_capacity).cloned() {
+            match table.entry(hash, |v| v.eq_key(&item), |v| v.hash_key()) {
+                hop_hash::hash_table::Entry::Vacant(entry) => {
+                    entry.insert(item);
+                }
+                hop_hash::hash_table::Entry::Occupied(_) => unreachable!(),
+            }
+        }
+
         group.throughput(Throughput::Elements(hop_capacity as u64));
         group.bench_function(BenchmarkId::new("hop_hash", size), |b| {
             b.iter_batched(
                 || {
-                    let mut hash_and_item = hash_and_item.clone();
-
-                    let mut table = HopHashTable::<TestItem>::with_capacity(0);
-                    for (hash, item) in hash_and_item.iter().take(hop_capacity).cloned() {
-                        match table.entry(hash, |v| v.eq_key(&item), |v| v.hash_key()) {
-                            hop_hash::hash_table::Entry::Vacant(entry) => {
-                                entry.insert(item);
-                            }
-                            hop_hash::hash_table::Entry::Occupied(_) => unreachable!(),
-                        }
-                    }
-
+                    let mut hash_and_item = hash_and_item[..hop_capacity].to_vec();
+                    let table = table.clone();
                     hash_and_item.shuffle(&mut SmallRng::from_os_rng());
                     (table, hash_and_item)
                 },
                 |(mut table, hash_and_item)| {
-                    for (hash, item) in hash_and_item.iter().take(hop_capacity) {
+                    for (hash, item) in hash_and_item.iter() {
                         let result = table.remove(*hash, |v| v.eq_key(item));
                         black_box(result);
                     }
@@ -766,27 +753,28 @@ fn bench_remove<TestItem: KeyValuePair, const MAX_SIZE: usize>(c: &mut Criterion
             )
         });
 
+        let mut table = HashbrownHashTable::<TestItem>::with_capacity(0);
+        for (hash, item) in hash_and_item.iter().take(hashbrown_capacity).cloned() {
+            match table.entry(hash, |v| v.eq_key(&item), |v| v.hash_key()) {
+                HashbrownEntry::Vacant(entry) => {
+                    entry.insert(item);
+                }
+                HashbrownEntry::Occupied(_) => unreachable!(),
+            }
+        }
+
         group.throughput(Throughput::Elements(hashbrown_capacity as u64));
         group.bench_function(BenchmarkId::new("hashbrown", size), |b| {
             b.iter_batched(
                 || {
-                    let mut hash_and_item = hash_and_item.clone();
+                    let mut hash_and_item = hash_and_item[..hashbrown_capacity].to_vec();
 
-                    let mut table = HashbrownHashTable::<TestItem>::with_capacity(0);
-                    for (hash, item) in hash_and_item.iter().take(hashbrown_capacity).cloned() {
-                        match table.entry(hash, |v| v.eq_key(&item), |v| v.hash_key()) {
-                            HashbrownEntry::Vacant(entry) => {
-                                entry.insert(item);
-                            }
-                            HashbrownEntry::Occupied(_) => unreachable!(),
-                        }
-                    }
-
+                    let table = table.clone();
                     hash_and_item.shuffle(&mut SmallRng::from_os_rng());
                     (table, hash_and_item)
                 },
                 |(mut table, hash_and_item)| {
-                    for (hash, item) in hash_and_item.iter().take(hashbrown_capacity) {
+                    for (hash, item) in hash_and_item.iter() {
                         let result = match table.find_entry(*hash, |v| v.eq_key(item)) {
                             Ok(entry) => Some(entry.remove().0),
                             Err(_) => None,
