@@ -7,9 +7,9 @@ use cfg_if::cfg_if;
 extern crate alloc;
 
 cfg_if! {
-    if #[cfg(all(feature = "std", feature = "foldhash"))] {
+    if #[cfg(feature = "foldhash")] {
         use foldhash::fast::RandomState;
-    } else if #[cfg(all(feature = "std", not(feature = "foldhash")))] {
+    } else if #[cfg(feature = "std")] {
         use std::collections::hash_map::RandomState;
     }
 }
@@ -31,7 +31,7 @@ pub mod hash_set;
 cfg_if! {
     if #[cfg(any(feature = "std", feature = "foldhash"))] {
         /// The default `HashMap` type using `RandomState` as the hasher.
-        pub type HashMap<K, V, S = RandomState> = hash_map::HashMap<K, V, S>;
+        pub type HashMap<K, V> = hash_map::HashMap<K, V, RandomState>;
     }else {
         /// The default `HashMap` type. You must provide a hasher.
         pub type HashMap<K, V, S> = hash_map::HashMap<K, V, S>;
@@ -41,7 +41,7 @@ cfg_if! {
 cfg_if! {
     if #[cfg(any(feature = "std", feature = "foldhash"))] {
         /// The default `HashSet` type using `RandomState` as the hasher.
-        pub type HashSet<K, S = RandomState> = hash_set::HashSet<K, S>;
+        pub type HashSet<K> = hash_set::HashSet<K, RandomState>;
     }else {
         /// The default `HashSet` type. You must provide a hasher.
         pub type HashSet<K, S> = hash_set::HashSet<K, S>;

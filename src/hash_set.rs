@@ -65,7 +65,7 @@ where
     /// # {
     /// use std::collections::hash_map::RandomState;
     ///
-    /// use hop_hash::HashSet;
+    /// use hop_hash::hash_set::HashSet;
     ///
     /// let set: HashSet<i32, _> = HashSet::with_hasher(RandomState::new());
     /// assert!(set.is_empty());
@@ -87,7 +87,7 @@ where
     /// # {
     /// use std::collections::hash_map::RandomState;
     ///
-    /// use hop_hash::HashSet;
+    /// use hop_hash::hash_set::HashSet;
     ///
     /// let set: HashSet<i32, _> = HashSet::with_capacity_and_hasher(100, RandomState::new());
     /// assert!(set.capacity() >= 100);

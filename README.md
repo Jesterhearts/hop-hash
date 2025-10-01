@@ -11,6 +11,17 @@ behavior.
 This crate provides `HashMap` and `HashSet` implementations built on top of a lower-level
 `HashTable` structure.
 
+## When to Use `hop-hash`
+`hop-hash` is a good choice when you need a high-performance hash table with predictable lookup
+times, especially for large datasets. It is particularly well-suited for scenarios where:
+- You want to minimize memory overhead while maintaining performance (note that there is a minimum
+  size of 272 entries).
+- You want constant-time worst-case lookups (which can be further bounded by using 8-way
+  neighborhoods).
+- You have a some churn in your dataset (i.e., insertions and deletions), and you have larger tables
+  (>16-32k elements). `hop-hash` performs well with mixed workloads, but `hashbrown` is generally
+  better for read-only or small workloads.
+
 ## Features
 
 - **High Performance**: Optimized for fast lookups, insertions, and removals with a default target
@@ -25,6 +36,19 @@ This crate provides `HashMap` and `HashSet` implementations built on top of a lo
   hash inputs without uncontrolled memory growth, at the cost of degraded performance in such
   scenarios.
 - **Few Dependencies**: Pure Rust implementation with two dependencies - `cfg-if`, and `foldhash` (optional).
+
+## Basic Usage
+```rust
+use hop_hash::HashMap;
+
+let mut map = HashMap::new();
+map.insert("key1", "value1");
+map.insert("key2", "value2");
+
+assert_eq!(map.get(&"key1"), Some(&"value1"));
+map.remove(&"key2");
+assert_eq!(map.get(&"key2"), None);
+```
 
 ## Choosing a Neighborhood Size
 The default choice of a 16-entry neighborhood balances performance and memory usage effectively. A
@@ -101,18 +125,9 @@ this overflow being used with a decent hash function are effectively zero.
 - **Key Constraints**: The `Eq` and `Hash` implementations for keys must be consistent.
 
 ## Implementation Notes & Quirks
-Some non-obvious micro-optimizations are used to improve performance:
-
-- **`ptr::write_bytes` for Initialization**: The `HopInfo` arrays are initialized using
-  `ptr::write(0)` rather than `alloc_zeroed`. On my machine, this showed a benchmark improvement of
-  up to 30%, and was kept for that reason.
 - **Load Factor Choice**: The table doesn't support a load factor of 87.5% (7/8). While easy to
   implement, it showed no significant benchmark impact, so the slightly higher memory usage was not
   deemed worth it.
-- **Bucket 0 Optimization**: During lookups, bucket 0 is _always_ checked unconditionally. Testing
-  revealed that this bucket is almost always occupied, and checking it first skips the overhead of
-  looking up the neighborhood info, improving performance for the common case where an item is in
-  its ideal bucket.
 
 ## A Note on Benchmarks
 

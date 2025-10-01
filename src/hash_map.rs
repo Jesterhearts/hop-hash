@@ -80,7 +80,7 @@ where
     /// # {
     /// use std::collections::hash_map::RandomState;
     ///
-    /// use hop_hash::HashMap;
+    /// use hop_hash::hash_map::HashMap;
     ///
     /// let map: HashMap<i32, String, _> = HashMap::with_hasher(RandomState::new());
     /// assert!(map.is_empty());
@@ -102,7 +102,7 @@ where
     /// # {
     /// use std::collections::hash_map::RandomState;
     ///
-    /// use hop_hash::HashMap;
+    /// use hop_hash::hash_map::HashMap;
     ///
     /// let map: HashMap<i32, String, _> = HashMap::with_capacity_and_hasher(100, RandomState::new());
     /// assert!(map.capacity() >= 100);
