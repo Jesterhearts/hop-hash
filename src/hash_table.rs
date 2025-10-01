@@ -1183,17 +1183,15 @@ impl<V> HashTable<V> {
             neighborhood_mask ^= 1 << index;
             next_index = neighborhood_mask.trailing_zeros() as usize;
 
-            if neighborhood_mask != 0 {
-                // SAFETY: Caller ensures that `bucket` is within bounds, as it is derived
-                // from the hash and `max_root_mask`.
-                unsafe {
-                    prefetch(
-                        self.tags_ptr()
-                            .as_ref()
-                            .as_ptr()
-                            .add(base + next_index * LANES),
-                    );
-                }
+            // SAFETY: Caller ensures that `bucket` is within bounds, as it is derived
+            // from the hash and `max_root_mask`.
+            unsafe {
+                prefetch(
+                    self.tags_ptr()
+                        .as_ref()
+                        .as_ptr()
+                        .add(base + next_index * LANES * usize::from(neighborhood_mask != 0)),
+                );
             }
 
             if index != 0 {
@@ -1232,9 +1230,12 @@ impl<V> HashTable<V> {
             // SAFETY: Caller ensures that `base` is within bounds, as it is derived from
             // a validated bucket and an index within the neighborhood.
             unsafe {
-                if tags != 0 {
-                    prefetch(self.buckets_ptr().as_ref().as_ptr().add(base + next_index));
-                }
+                prefetch(
+                    self.buckets_ptr()
+                        .as_ref()
+                        .as_ptr()
+                        .add(base + next_index * usize::from(tags != 0)),
+                );
             }
 
             // SAFETY: We have ensured `slot` is within bounds, as it is calculated from a
