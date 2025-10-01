@@ -24,7 +24,7 @@ This crate provides `HashMap` and `HashSet` implementations built on top of a lo
 - **Robust Overflow Handling**: Includes an overflow mechanism to gracefully handle pathological
   hash inputs without uncontrolled memory growth, at the cost of degraded performance in such
   scenarios.
-- **Few Dependencies**: Pure Rust implementation with one external dependency (`cfg-if`).
+- **Few Dependencies**: Pure Rust implementation with two dependencies - `cfg-if`, and `foldhash` (optional).
 
 ## Choosing a Neighborhood Size
 The default choice of a 16-entry neighborhood balances performance and memory usage effectively. A

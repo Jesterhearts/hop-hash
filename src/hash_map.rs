@@ -47,22 +47,15 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// # use core::hash::BuildHasher;
-    /// # use siphasher::sip::SipHasher;
-    /// #
-    /// # use hop_hash::HashMap;
-    /// #
-    /// # struct SimpleHasher;
-    /// # impl BuildHasher for SimpleHasher {
-    /// #     type Hasher = SipHasher;
-    /// #
-    /// #     fn build_hasher(&self) -> Self::Hasher {
-    /// #         SipHasher::new()
-    /// #     }
-    /// # }
-    /// #
-    /// let map: HashMap<i32, String, _> = HashMap::with_hasher(SimpleHasher);
+    /// # #[cfg(any(feature = "std", feature = "foldhash"))]
+    /// # {
+    /// use std::collections::hash_map::RandomState;
+    ///
+    /// use hop_hash::HashMap;
+    ///
+    /// let map: HashMap<i32, String, _> = HashMap::with_hasher(RandomState::new());
     /// assert!(map.is_empty());
+    /// # }
     /// ```
     pub fn with_hasher(hash_builder: S) -> Self {
         Self::with_capacity_and_hasher(0, hash_builder)
@@ -76,22 +69,15 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// # use core::hash::BuildHasher;
-    /// # use siphasher::sip::SipHasher;
-    /// #
-    /// # use hop_hash::HashMap;
-    /// #
-    /// # struct SimpleHasher;
-    /// # impl BuildHasher for SimpleHasher {
-    /// #     type Hasher = SipHasher;
-    /// #
-    /// #     fn build_hasher(&self) -> Self::Hasher {
-    /// #         SipHasher::new()
-    /// #     }
-    /// # }
-    /// #
-    /// let map: HashMap<i32, String, _> = HashMap::with_capacity_and_hasher(100, SimpleHasher);
+    /// # #[cfg(any(feature = "std", feature = "foldhash"))]
+    /// # {
+    /// use std::collections::hash_map::RandomState;
+    ///
+    /// use hop_hash::HashMap;
+    ///
+    /// let map: HashMap<i32, String, _> = HashMap::with_capacity_and_hasher(100, RandomState::new());
     /// assert!(map.capacity() >= 100);
+    /// # }
     /// ```
     pub fn with_capacity_and_hasher(capacity: usize, hash_builder: S) -> Self {
         Self {
@@ -105,24 +91,15 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// # use core::hash::BuildHasher;
-    /// # use siphasher::sip::SipHasher;
-    /// #
-    /// # use hop_hash::HashMap;
-    /// #
-    /// # struct SimpleHasher;
-    /// # impl BuildHasher for SimpleHasher {
-    /// #     type Hasher = SipHasher;
-    /// #
-    /// #     fn build_hasher(&self) -> Self::Hasher {
-    /// #         SipHasher::new()
-    /// #     }
-    /// # }
-    /// #
-    /// let mut map = HashMap::with_hasher(SimpleHasher);
+    /// # #[cfg(any(feature = "std", feature = "foldhash"))]
+    /// # {
+    /// use hop_hash::HashMap;
+    ///
+    /// let mut map: HashMap<i32, &str> = HashMap::new();
     /// assert_eq!(map.len(), 0);
     /// map.insert(1, "a");
     /// assert_eq!(map.len(), 1);
+    /// # }
     /// ```
     pub fn len(&self) -> usize {
         self.table.len()
@@ -133,24 +110,15 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// # use core::hash::BuildHasher;
-    /// # use siphasher::sip::SipHasher;
-    /// #
-    /// # use hop_hash::HashMap;
-    /// #
-    /// # struct SimpleHasher;
-    /// # impl BuildHasher for SimpleHasher {
-    /// #     type Hasher = SipHasher;
-    /// #
-    /// #     fn build_hasher(&self) -> Self::Hasher {
-    /// #         SipHasher::new()
-    /// #     }
-    /// # }
-    /// #
-    /// let mut map = HashMap::with_hasher(SimpleHasher);
+    /// # #[cfg(any(feature = "std", feature = "foldhash"))]
+    /// # {
+    /// use hop_hash::HashMap;
+    ///
+    /// let mut map: HashMap<i32, &str> = HashMap::new();
     /// assert!(map.is_empty());
     /// map.insert(1, "a");
     /// assert!(!map.is_empty());
+    /// # }
     /// ```
     pub fn is_empty(&self) -> bool {
         self.table.is_empty()
@@ -164,22 +132,13 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// # use core::hash::BuildHasher;
-    /// # use siphasher::sip::SipHasher;
-    /// #
-    /// # use hop_hash::HashMap;
-    /// #
-    /// # struct SimpleHasher;
-    /// # impl BuildHasher for SimpleHasher {
-    /// #     type Hasher = SipHasher;
-    /// #
-    /// #     fn build_hasher(&self) -> Self::Hasher {
-    /// #         SipHasher::new()
-    /// #     }
-    /// # }
-    /// #
-    /// let map: HashMap<i32, String, _> = HashMap::with_capacity_and_hasher(100, SimpleHasher);
+    /// # #[cfg(any(feature = "std", feature = "foldhash"))]
+    /// # {
+    /// use hop_hash::HashMap;
+    ///
+    /// let map: HashMap<i32, String> = HashMap::with_capacity(100);
     /// assert!(map.capacity() >= 100);
+    /// # }
     /// ```
     pub fn capacity(&self) -> usize {
         self.table.capacity()
@@ -192,25 +151,16 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// # use core::hash::BuildHasher;
-    /// # use siphasher::sip::SipHasher;
-    /// #
-    /// # use hop_hash::HashMap;
-    /// #
-    /// # struct SimpleHasher;
-    /// # impl BuildHasher for SimpleHasher {
-    /// #     type Hasher = SipHasher;
-    /// #
-    /// #     fn build_hasher(&self) -> Self::Hasher {
-    /// #         SipHasher::new()
-    /// #     }
-    /// # }
-    /// #
-    /// let mut map = HashMap::with_hasher(SimpleHasher);
+    /// # #[cfg(any(feature = "std", feature = "foldhash"))]
+    /// # {
+    /// use hop_hash::HashMap;
+    ///
+    /// let mut map: HashMap<i32, &str> = HashMap::new();
     /// map.insert(1, "a");
     /// assert!(!map.is_empty());
     /// map.clear();
     /// assert!(map.is_empty());
+    /// # }
     /// ```
     pub fn clear(&mut self) {
         self.table.clear();
@@ -227,21 +177,11 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// # use core::hash::BuildHasher;
-    /// # use siphasher::sip::SipHasher;
-    /// #
-    /// # use hop_hash::HashMap;
-    /// #
-    /// # struct SimpleHasher;
-    /// # impl BuildHasher for SimpleHasher {
-    /// #     type Hasher = SipHasher;
-    /// #
-    /// #     fn build_hasher(&self) -> Self::Hasher {
-    /// #         SipHasher::new()
-    /// #     }
-    /// # }
-    /// #
-    /// let mut map = HashMap::with_capacity_and_hasher(1000, SimpleHasher);
+    /// # #[cfg(any(feature = "std", feature = "foldhash"))]
+    /// # {
+    /// use hop_hash::HashMap;
+    ///
+    /// let mut map: HashMap<i32, &str> = HashMap::with_capacity(1000);
     /// map.insert(1, "one");
     /// map.insert(2, "two");
     ///
@@ -255,6 +195,7 @@ where
     /// assert!(map.capacity() >= 2);
     /// assert!(map.capacity() < 1000);
     /// assert_eq!(map.len(), 2);
+    /// # }
     /// ```
     pub fn shrink_to_fit(&mut self) {
         self.table
@@ -267,6 +208,110 @@ where
             .reserve(additional, |k| self.hash_builder.hash_one(&k.0));
     }
 
+    /// Retains only the elements specified by the predicate.
+    ///
+    /// In other words, remove all pairs `(k, v)` for which `f(&k, &v)` returns
+    /// `false`. The elements are visited in unsorted (and unspecified)
+    /// order.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # #[cfg(any(feature = "std", feature = "foldhash"))]
+    /// # {
+    /// use hop_hash::HashMap;
+    ///
+    /// let mut map: HashMap<i32, i32> = HashMap::new();
+    /// map.insert(1, 10);
+    /// map.insert(2, 20);
+    /// map.insert(3, 30);
+    /// map.insert(4, 40);
+    ///
+    /// map.retain(|&k, &v| k % 2 == 0 && v < 30);
+    /// assert_eq!(map.len(), 1);
+    /// assert_eq!(map.get(&2), Some(&20));
+    /// # }
+    /// ```
+    pub fn retain(&mut self, mut f: impl FnMut(&K, &V) -> bool) {
+        self.table
+            .retain(|(k, v)| f(k, v), |(k, _)| self.hash_builder.hash_one(k));
+    }
+
+    /// Retains only the elements specified by the predicate, with mutable
+    /// access to values.
+    ///
+    /// In other words, remove all pairs `(k, v)` for which `f(&k, &mut v)`
+    /// returns `false`. The elements are visited in unsorted (and
+    /// unspecified) order.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # #[cfg(any(feature = "std", feature = "foldhash"))]
+    /// # {
+    /// use hop_hash::HashMap;
+    ///
+    /// let mut map: HashMap<i32, i32> = HashMap::new();
+    /// map.insert(1, 10);
+    /// map.insert(2, 20);
+    /// map.insert(3, 30);
+    ///
+    /// map.retain_mut(|&k, v| {
+    ///     if k % 2 == 0 {
+    ///         *v *= 2;
+    ///         true
+    ///     } else {
+    ///         false
+    ///     }
+    /// });
+    /// assert_eq!(map.len(), 1);
+    /// assert_eq!(map.get(&2), Some(&40));
+    /// # }
+    /// ```
+    pub fn retain_mut(&mut self, mut f: impl FnMut(&K, &mut V) -> bool) {
+        self.table
+            .retain_mut(|(k, v)| f(k, v), |(k, _)| self.hash_builder.hash_one(k));
+    }
+
+    /// Creates an iterator that removes and yields pairs from the map for which
+    /// the predicate returns `true`.
+    ///
+    /// If the iterator is not exhausted, e.g. because it is dropped, the
+    /// remaining pairs satisfying the predicate will still be removed from
+    /// the map.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # #[cfg(any(feature = "std", feature = "foldhash"))]
+    /// # {
+    /// use hop_hash::HashMap;
+    ///
+    /// let mut map: HashMap<i32, i32> = HashMap::new();
+    /// map.insert(1, 10);
+    /// map.insert(2, 20);
+    /// map.insert(3, 30);
+    /// map.insert(4, 40);
+    ///
+    /// let extracted: Vec<_> = map.extract_if(|&k, &mut v| k % 2 == 0).collect();
+    /// assert_eq!(map.len(), 2);
+    /// assert_eq!(extracted.len(), 2);
+    /// assert!(map.contains_key(&1));
+    /// assert!(map.contains_key(&3));
+    /// # }
+    /// ```
+    pub fn extract_if<'a>(
+        &'a mut self,
+        mut f: impl FnMut(&K, &mut V) -> bool + 'a,
+    ) -> ExtractIf<'a, K, V> {
+        ExtractIf {
+            inner: self.table.extract_if(
+                Box::new(move |(k, v)| f(k, v)),
+                Box::new(|(k, _)| self.hash_builder.hash_one(k)),
+            ),
+        }
+    }
+
     /// Inserts a key-value pair into the map.
     ///
     /// If the map did not have this key present, `None` is returned.
@@ -276,24 +321,15 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// # use core::hash::BuildHasher;
-    /// # use siphasher::sip::SipHasher;
-    /// #
-    /// # use hop_hash::HashMap;
-    /// #
-    /// # struct SimpleHasher;
-    /// # impl BuildHasher for SimpleHasher {
-    /// #     type Hasher = SipHasher;
-    /// #
-    /// #     fn build_hasher(&self) -> Self::Hasher {
-    /// #         SipHasher::new()
-    /// #     }
-    /// # }
-    /// #
-    /// let mut map = HashMap::with_hasher(SimpleHasher);
+    /// # #[cfg(any(feature = "std", feature = "foldhash"))]
+    /// # {
+    /// use hop_hash::HashMap;
+    ///
+    /// let mut map: HashMap<i32, &str> = HashMap::new();
     /// assert_eq!(map.insert(37, "a"), None);
     /// assert_eq!(map.insert(37, "b"), Some("a"));
     /// assert_eq!(map.get(&37), Some(&"b"));
+    /// # }
     /// ```
     pub fn insert(&mut self, key: K, value: V) -> Option<V> {
         let hash = self.hash_builder.hash_one(&key);
@@ -318,24 +354,15 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// # use core::hash::BuildHasher;
-    /// # use siphasher::sip::SipHasher;
-    /// #
-    /// # use hop_hash::HashMap;
-    /// #
-    /// # struct SimpleHasher;
-    /// # impl BuildHasher for SimpleHasher {
-    /// #     type Hasher = SipHasher;
-    /// #
-    /// #     fn build_hasher(&self) -> Self::Hasher {
-    /// #         SipHasher::new()
-    /// #     }
-    /// # }
-    /// #
-    /// let mut map = HashMap::with_hasher(SimpleHasher);
+    /// # #[cfg(any(feature = "std", feature = "foldhash"))]
+    /// # {
+    /// use hop_hash::HashMap;
+    ///
+    /// let mut map: HashMap<i32, &str> = HashMap::new();
     /// map.insert(1, "a");
     /// assert_eq!(map.get(&1), Some(&"a"));
     /// assert_eq!(map.get(&2), None);
+    /// # }
     /// ```
     pub fn get(&self, key: &K) -> Option<&V> {
         let hash = self.hash_builder.hash_one(key);
@@ -347,26 +374,17 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// # use core::hash::BuildHasher;
-    /// # use siphasher::sip::SipHasher;
-    /// #
-    /// # use hop_hash::HashMap;
-    /// #
-    /// # struct SimpleHasher;
-    /// # impl BuildHasher for SimpleHasher {
-    /// #     type Hasher = SipHasher;
-    /// #
-    /// #     fn build_hasher(&self) -> Self::Hasher {
-    /// #         SipHasher::new()
-    /// #     }
-    /// # }
-    /// #
-    /// let mut map = HashMap::with_hasher(SimpleHasher);
+    /// # #[cfg(any(feature = "std", feature = "foldhash"))]
+    /// # {
+    /// use hop_hash::HashMap;
+    ///
+    /// let mut map: HashMap<i32, &str> = HashMap::new();
     /// map.insert(1, "a");
     /// if let Some(x) = map.get_mut(&1) {
     ///     *x = "b";
     /// }
     /// assert_eq!(map.get(&1), Some(&"b"));
+    /// # }
     /// ```
     pub fn get_mut(&mut self, key: &K) -> Option<&mut V> {
         let hash = self.hash_builder.hash_one(key);
@@ -378,24 +396,15 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// # use core::hash::BuildHasher;
-    /// # use siphasher::sip::SipHasher;
-    /// #
-    /// # use hop_hash::HashMap;
-    /// #
-    /// # struct SimpleHasher;
-    /// # impl BuildHasher for SimpleHasher {
-    /// #     type Hasher = SipHasher;
-    /// #
-    /// #     fn build_hasher(&self) -> Self::Hasher {
-    /// #         SipHasher::new()
-    /// #     }
-    /// # }
-    /// #
-    /// let mut map = HashMap::with_hasher(SimpleHasher);
+    /// # #[cfg(any(feature = "std", feature = "foldhash"))]
+    /// # {
+    /// use hop_hash::HashMap;
+    ///
+    /// let mut map: HashMap<i32, &str> = HashMap::new();
     /// map.insert(1, "a");
     /// assert!(map.contains_key(&1));
     /// assert!(!map.contains_key(&2));
+    /// # }
     /// ```
     pub fn contains_key(&self, key: &K) -> bool {
         self.get(key).is_some()
@@ -407,24 +416,15 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// # use core::hash::BuildHasher;
-    /// # use siphasher::sip::SipHasher;
-    /// #
-    /// # use hop_hash::HashMap;
-    /// #
-    /// # struct SimpleHasher;
-    /// # impl BuildHasher for SimpleHasher {
-    /// #     type Hasher = SipHasher;
-    /// #
-    /// #     fn build_hasher(&self) -> Self::Hasher {
-    /// #         SipHasher::new()
-    /// #     }
-    /// # }
-    /// #
-    /// let mut map = HashMap::with_hasher(SimpleHasher);
+    /// # #[cfg(any(feature = "std", feature = "foldhash"))]
+    /// # {
+    /// use hop_hash::HashMap;
+    ///
+    /// let mut map: HashMap<i32, &str> = HashMap::new();
     /// map.insert(1, "a");
     /// assert_eq!(map.remove(&1), Some("a"));
     /// assert_eq!(map.remove(&1), None);
+    /// # }
     /// ```
     pub fn remove(&mut self, key: &K) -> Option<V> {
         let hash = self.hash_builder.hash_one(key);
@@ -437,24 +437,15 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// # use core::hash::BuildHasher;
-    /// # use siphasher::sip::SipHasher;
-    /// #
-    /// # use hop_hash::HashMap;
-    /// #
-    /// # struct SimpleHasher;
-    /// # impl BuildHasher for SimpleHasher {
-    /// #     type Hasher = SipHasher;
-    /// #
-    /// #     fn build_hasher(&self) -> Self::Hasher {
-    /// #         SipHasher::new()
-    /// #     }
-    /// # }
-    /// #
-    /// let mut map = HashMap::with_hasher(SimpleHasher);
+    /// # #[cfg(any(feature = "std", feature = "foldhash"))]
+    /// # {
+    /// use hop_hash::HashMap;
+    ///
+    /// let mut map: HashMap<i32, &str> = HashMap::new();
     /// map.insert(1, "a");
     /// assert_eq!(map.remove_entry(&1), Some((1, "a")));
     /// assert_eq!(map.remove_entry(&1), None);
+    /// # }
     /// ```
     pub fn remove_entry(&mut self, key: &K) -> Option<(K, V)> {
         let hash = self.hash_builder.hash_one(key);
@@ -467,27 +458,18 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// # use core::hash::BuildHasher;
-    /// # use siphasher::sip::SipHasher;
-    /// #
-    /// # use hop_hash::HashMap;
-    /// #
-    /// # struct SimpleHasher;
-    /// # impl BuildHasher for SimpleHasher {
-    /// #     type Hasher = SipHasher;
-    /// #
-    /// #     fn build_hasher(&self) -> Self::Hasher {
-    /// #         SipHasher::new()
-    /// #     }
-    /// # }
-    /// #
-    /// let mut map = HashMap::with_hasher(SimpleHasher);
+    /// # #[cfg(any(feature = "std", feature = "foldhash"))]
+    /// # {
+    /// use hop_hash::HashMap;
+    ///
+    /// let mut map: HashMap<i32, &str> = HashMap::new();
     ///
     /// map.entry(1).or_insert("a");
     /// map.entry(2).or_insert("b");
     ///
     /// assert_eq!(map.get(&1), Some(&"a"));
     /// assert_eq!(map.get(&2), Some(&"b"));
+    /// # }
     /// ```
     pub fn entry(&mut self, key: K) -> Entry<'_, K, V> {
         let hash = self.hash_builder.hash_one(&key);
@@ -508,31 +490,52 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// # use core::hash::BuildHasher;
-    /// # use siphasher::sip::SipHasher;
-    /// #
-    /// # use hop_hash::HashMap;
-    /// #
-    /// # struct SimpleHasher;
-    /// # impl BuildHasher for SimpleHasher {
-    /// #     type Hasher = SipHasher;
-    /// #
-    /// #     fn build_hasher(&self) -> Self::Hasher {
-    /// #         SipHasher::new()
-    /// #     }
-    /// # }
-    /// #
-    /// let mut map = HashMap::with_hasher(SimpleHasher);
+    /// # #[cfg(any(feature = "std", feature = "foldhash"))]
+    /// # {
+    /// use hop_hash::HashMap;
+    ///
+    /// let mut map: HashMap<i32, &str> = HashMap::new();
     /// map.insert(1, "a");
     /// map.insert(2, "b");
     ///
     /// for (key, value) in map.iter() {
     ///     println!("Key: {}, Value: {}", key, value);
     /// }
+    /// # }
     /// ```
     pub fn iter(&self) -> Iter<'_, K, V> {
         Iter {
             inner: self.table.iter(),
+        }
+    }
+
+    /// Returns an iterator over the key-value pairs of the map with mutable
+    /// references to the values.
+    ///
+    /// The iterator yields `(&K, &mut V)` pairs in an arbitrary order.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # #[cfg(any(feature = "std", feature = "foldhash"))]
+    /// # {
+    /// use hop_hash::HashMap;
+    ///
+    /// let mut map: HashMap<i32, String> = HashMap::new();
+    /// map.insert(1, "a".to_string());
+    /// map.insert(2, "b".to_string());
+    ///
+    /// for (_key, value) in map.iter_mut() {
+    ///     value.make_ascii_uppercase();
+    /// }
+    ///
+    /// assert_eq!(map.get(&1), Some(&"A".to_string()));
+    /// assert_eq!(map.get(&2), Some(&"B".to_string()));
+    /// # }
+    /// ```
+    pub fn iter_mut(&mut self) -> IterMut<'_, K, V> {
+        IterMut {
+            inner: self.table.iter_mut(),
         }
     }
 
@@ -541,26 +544,17 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// # use core::hash::BuildHasher;
-    /// # use siphasher::sip::SipHasher;
-    /// #
-    /// # use hop_hash::HashMap;
-    /// #
-    /// # struct SimpleHasher;
-    /// # impl BuildHasher for SimpleHasher {
-    /// #     type Hasher = SipHasher;
-    /// #
-    /// #     fn build_hasher(&self) -> Self::Hasher {
-    /// #         SipHasher::new()
-    /// #     }
-    /// # }
-    /// #
-    /// let mut map = HashMap::with_hasher(SimpleHasher);
+    /// # #[cfg(any(feature = "std", feature = "foldhash"))]
+    /// # {
+    /// use hop_hash::HashMap;
+    ///
+    /// let mut map: HashMap<i32, &str> = HashMap::new();
     /// map.insert(1, "a");
     /// map.insert(2, "b");
     ///
     /// let keys: Vec<_> = map.keys().collect();
     /// assert_eq!(keys.len(), 2);
+    /// # }
     /// ```
     pub fn keys(&self) -> Keys<'_, K, V> {
         Keys { inner: self.iter() }
@@ -571,29 +565,47 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// # use core::hash::BuildHasher;
-    /// # use siphasher::sip::SipHasher;
-    /// #
-    /// # use hop_hash::HashMap;
-    /// #
-    /// # struct SimpleHasher;
-    /// # impl BuildHasher for SimpleHasher {
-    /// #     type Hasher = SipHasher;
-    /// #
-    /// #     fn build_hasher(&self) -> Self::Hasher {
-    /// #         SipHasher::new()
-    /// #     }
-    /// # }
-    /// #
-    /// let mut map = HashMap::with_hasher(SimpleHasher);
+    /// # #[cfg(any(feature = "std", feature = "foldhash"))]
+    /// # {
+    /// use hop_hash::HashMap;
+    ///
+    /// let mut map: HashMap<i32, &str> = HashMap::new();
     /// map.insert(1, "a");
     /// map.insert(2, "b");
     ///
     /// let values: Vec<_> = map.values().collect();
     /// assert_eq!(values.len(), 2);
+    /// # }
     /// ```
     pub fn values(&self) -> Values<'_, K, V> {
         Values { inner: self.iter() }
+    }
+
+    /// Returns an iterator over mutable references to the values of the map.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # #[cfg(any(feature = "std", feature = "foldhash"))]
+    /// # {
+    /// use hop_hash::HashMap;
+    ///
+    /// let mut map: HashMap<i32, String> = HashMap::new();
+    /// map.insert(1, "a".to_string());
+    /// map.insert(2, "b".to_string());
+    ///
+    /// for value in map.values_mut() {
+    ///     value.make_ascii_uppercase();
+    /// }
+    ///
+    /// assert_eq!(map.get(&1), Some(&"A".to_string()));
+    /// assert_eq!(map.get(&2), Some(&"B".to_string()));
+    /// # }
+    /// ```
+    pub fn values_mut(&mut self) -> ValuesMut<'_, K, V> {
+        ValuesMut {
+            inner: self.iter_mut(),
+        }
     }
 
     /// Returns an iterator that removes and yields all key-value pairs from the
@@ -608,27 +620,18 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// # use core::hash::BuildHasher;
-    /// # use siphasher::sip::SipHasher;
-    /// #
-    /// # use hop_hash::HashMap;
-    /// #
-    /// # struct SimpleHasher;
-    /// # impl BuildHasher for SimpleHasher {
-    /// #     type Hasher = SipHasher;
-    /// #
-    /// #     fn build_hasher(&self) -> Self::Hasher {
-    /// #         SipHasher::new()
-    /// #     }
-    /// # }
-    /// #
-    /// let mut map = HashMap::with_hasher(SimpleHasher);
+    /// # #[cfg(any(feature = "std", feature = "foldhash"))]
+    /// # {
+    /// use hop_hash::HashMap;
+    ///
+    /// let mut map: HashMap<i32, &str> = HashMap::new();
     /// map.insert(1, "a");
     /// map.insert(2, "b");
     ///
     /// let pairs: Vec<_> = map.drain().collect();
     /// assert!(map.is_empty());
     /// assert_eq!(pairs.len(), 2);
+    /// # }
     /// ```
     pub fn drain(&mut self) -> Drain<'_, K, V> {
         Drain {
@@ -647,23 +650,13 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// # use core::hash::BuildHasher;
-    /// # use siphasher::sip::SipHasher;
-    /// #
-    /// # use hop_hash::HashMap;
-    /// #
-    /// # #[derive(Default)]
-    /// # struct SimpleHasher;
-    /// # impl BuildHasher for SimpleHasher {
-    /// #     type Hasher = SipHasher;
-    /// #
-    /// #     fn build_hasher(&self) -> Self::Hasher {
-    /// #         SipHasher::new()
-    /// #     }
-    /// # }
-    /// #
-    /// let map: HashMap<i32, String, SimpleHasher> = HashMap::new();
+    /// # #[cfg(any(feature = "std", feature = "foldhash"))]
+    /// # {
+    /// use hop_hash::HashMap;
+    ///
+    /// let map: HashMap<i32, String> = HashMap::new();
     /// assert!(map.is_empty());
+    /// # }
     /// ```
     pub fn new() -> Self {
         Self::with_hasher(S::default())
@@ -675,23 +668,13 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// # use core::hash::BuildHasher;
-    /// # use siphasher::sip::SipHasher;
-    /// #
-    /// # use hop_hash::HashMap;
-    /// #
-    /// # #[derive(Default)]
-    /// # struct SimpleHasher;
-    /// # impl BuildHasher for SimpleHasher {
-    /// #     type Hasher = SipHasher;
-    /// #
-    /// #     fn build_hasher(&self) -> Self::Hasher {
-    /// #         SipHasher::new()
-    /// #     }
-    /// # }
-    /// #
-    /// let map: HashMap<i32, String, SimpleHasher> = HashMap::with_capacity(100);
+    /// # #[cfg(any(feature = "std", feature = "foldhash"))]
+    /// # {
+    /// use hop_hash::HashMap;
+    ///
+    /// let map: HashMap<i32, String> = HashMap::with_capacity(100);
     /// assert!(map.capacity() >= 100);
+    /// # }
     /// ```
     pub fn with_capacity(capacity: usize) -> Self {
         Self::with_capacity_and_hasher(capacity, S::default())
@@ -856,6 +839,19 @@ impl<'a, K, V> Iterator for Iter<'a, K, V> {
     }
 }
 
+/// A mutable iterator over the key-value pairs of a `HashMap`.
+pub struct IterMut<'a, K, V> {
+    inner: crate::hash_table::IterMut<'a, (K, V)>,
+}
+
+impl<'a, K, V> Iterator for IterMut<'a, K, V> {
+    type Item = (&'a K, &'a mut V);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.inner.next().map(|(k, v)| (&*k, v))
+    }
+}
+
 /// An iterator over the keys of a `HashMap`.
 pub struct Keys<'a, K, V> {
     inner: Iter<'a, K, V>,
@@ -882,9 +878,27 @@ impl<'a, K, V> Iterator for Values<'a, K, V> {
     }
 }
 
+/// A mutable iterator over the values of a `HashMap`.
+pub struct ValuesMut<'a, K, V> {
+    inner: IterMut<'a, K, V>,
+}
+
+impl<'a, K, V> Iterator for ValuesMut<'a, K, V> {
+    type Item = &'a mut V;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.inner.next().map(|(_, v)| v)
+    }
+}
+
 /// A draining iterator over the key-value pairs of a `HashMap`.
 pub struct Drain<'a, K, V> {
     inner: crate::hash_table::Drain<'a, (K, V)>,
+}
+
+/// A consuming iterator over the key-value pairs of a `HashMap`.
+pub struct IntoIter<K, V> {
+    inner: crate::hash_table::IntoIter<(K, V)>,
 }
 
 impl<K, V> Iterator for Drain<'_, K, V> {
@@ -901,6 +915,100 @@ impl<K, V> Drop for Drain<'_, K, V> {
     }
 }
 
+impl<K, V> Iterator for IntoIter<K, V> {
+    type Item = (K, V);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.inner.next()
+    }
+}
+
+impl<K, V, S> IntoIterator for HashMap<K, V, S>
+where
+    K: Hash + Eq,
+    S: BuildHasher,
+{
+    type IntoIter = IntoIter<K, V>;
+    type Item = (K, V);
+
+    fn into_iter(self) -> Self::IntoIter {
+        IntoIter {
+            inner: self.table.into_iter(),
+        }
+    }
+}
+
+impl<'a, K, V, S> IntoIterator for &'a HashMap<K, V, S>
+where
+    K: Hash + Eq,
+    S: BuildHasher,
+{
+    type IntoIter = Iter<'a, K, V>;
+    type Item = (&'a K, &'a V);
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
+impl<'a, K, V, S> IntoIterator for &'a mut HashMap<K, V, S>
+where
+    K: Hash + Eq,
+    S: BuildHasher,
+{
+    type IntoIter = IterMut<'a, K, V>;
+    type Item = (&'a K, &'a mut V);
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter_mut()
+    }
+}
+
+impl<K, V, S> FromIterator<(K, V)> for HashMap<K, V, S>
+where
+    K: Hash + Eq,
+    S: BuildHasher + Default,
+{
+    fn from_iter<T: IntoIterator<Item = (K, V)>>(iter: T) -> Self {
+        let mut map = HashMap::new();
+        for (k, v) in iter {
+            map.insert(k, v);
+        }
+        map
+    }
+}
+
+impl<K, V, S> Extend<(K, V)> for HashMap<K, V, S>
+where
+    K: Hash + Eq,
+    S: BuildHasher,
+{
+    fn extend<T: IntoIterator<Item = (K, V)>>(&mut self, iter: T) {
+        for (k, v) in iter {
+            self.insert(k, v);
+        }
+    }
+}
+
+/// An iterator that removes and yields all values from the set that satisfy
+/// a given predicate.
+pub struct ExtractIf<'a, K, V> {
+    #[allow(clippy::type_complexity)]
+    inner: crate::hash_table::ExtractIf<
+        'a,
+        (K, V),
+        Box<dyn FnMut(&mut (K, V)) -> bool + 'a>,
+        Box<dyn Fn(&(K, V)) -> u64 + 'a>,
+    >,
+}
+
+impl<K, V> Iterator for ExtractIf<'_, K, V> {
+    type Item = (K, V);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.inner.next()
+    }
+}
 #[cfg(test)]
 mod tests {
     use alloc::format;
@@ -1242,5 +1350,37 @@ mod tests {
         }
 
         assert_eq!(map.get(&"first".to_string()), Some(&vec![1, 2, 3, 4]));
+    }
+
+    #[test]
+    fn test_iter_mut() {
+        let mut map = HashMap::with_hasher(SipHashBuilder::default());
+        map.insert(1, "one".to_string());
+        map.insert(2, "two".to_string());
+        map.insert(3, "three".to_string());
+
+        for (_key, value) in map.iter_mut() {
+            value.push('!');
+        }
+
+        assert_eq!(map.get(&1), Some(&"one!".to_string()));
+        assert_eq!(map.get(&2), Some(&"two!".to_string()));
+        assert_eq!(map.get(&3), Some(&"three!".to_string()));
+    }
+
+    #[test]
+    fn test_values_mut() {
+        let mut map = HashMap::with_hasher(SipHashBuilder::default());
+        map.insert(1, 10);
+        map.insert(2, 20);
+        map.insert(3, 30);
+
+        for value in map.values_mut() {
+            *value *= 2;
+        }
+
+        assert_eq!(map.get(&1), Some(&20));
+        assert_eq!(map.get(&2), Some(&40));
+        assert_eq!(map.get(&3), Some(&60));
     }
 }

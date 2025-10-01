@@ -298,6 +298,7 @@ dependencies = [
  "cfg-if",
  "clap",
  "criterion",
+ "foldhash",
  "hashbrown",
  "rand",
  "rand_distr",

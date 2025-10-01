@@ -892,13 +892,33 @@ impl<V> HashTable<V> {
         }
     }
 
+    /// Returns a mutable iterator over all values in the table.
+    ///
+    /// The iterator yields `&mut V` references in an arbitrary order.
+    /// The iteration order is not specified and may change between versions.
+    pub fn iter_mut(&mut self) -> IterMut<'_, V> {
+        // SAFETY: We have ensured that `self` is a valid mutable reference to
+        // the hash table. The `IterMut` struct will only yield mutable references
+        // to values within the table, and the lifetime is tied to `&mut self`,
+        // ensuring no other mutable references can exist simultaneously.
+        unsafe {
+            IterMut {
+                tags: self.tags_ptr().as_ref(),
+                values: self.buckets_ptr().as_mut(),
+                overflow_tail: &mut self.overflow,
+            }
+        }
+    }
+
     /// Returns an iterator that removes and yields all values from the table.
     ///
     /// After calling `drain()`, the table will be empty. The iterator yields
     /// owned values in an arbitrary order.
     ///
     /// Calling `mem::forget` on the iterator will leak all unyielded values in
-    /// the table without dropping them. This will cause memory to be leaked.
+    /// the table without dropping them. This will cause memory to be leaked
+    /// _even if the type does not allocate heap memory_ as the iterator
+    /// allocates memory to track its internal state.
     pub fn drain(&mut self) -> Drain<'_, V> {
         let total_slots = if self.layout.layout.size() == 0 {
             0
@@ -910,7 +930,7 @@ impl<V> HashTable<V> {
             return Drain {
                 total_slots,
                 occupied: Box::new([]),
-                overflow: std::mem::take(&mut self.overflow),
+                overflow: core::mem::take(&mut self.overflow),
                 table: self,
                 bucket_index: 0,
             };
@@ -946,7 +966,7 @@ impl<V> HashTable<V> {
         Drain {
             total_slots,
             occupied,
-            overflow: std::mem::take(&mut self.overflow),
+            overflow: core::mem::take(&mut self.overflow),
             table: self,
             bucket_index: 0,
         }
@@ -2020,6 +2040,114 @@ impl<V> HashTable<V> {
                 * (core::mem::size_of::<V>() + core::mem::size_of::<u64>()),
         }
     }
+
+    /// Retains only the elements specified by the predicate.
+    ///
+    /// The predicate is a closure that takes a reference to a value and returns
+    /// `true` if the value should be kept in the table, or `false` if it should
+    /// be removed.
+    ///
+    /// # Arguments
+    ///
+    /// * `f` - A closure that determines whether to retain each value
+    /// * `rehash` - A closure that computes the hash for a value, used to
+    ///   update the hopmap when removing entries
+    pub fn retain(&mut self, mut f: impl FnMut(&V) -> bool, rehash: impl Fn(&V) -> u64) {
+        self.retain_mut(|v| f(v), rehash);
+    }
+
+    /// Retains only the elements specified by the predicate.
+    ///
+    /// The predicate is a closure that takes a reference to a value and returns
+    /// `true` if the value should be kept in the table, or `false` if it should
+    /// be removed.
+    ///
+    /// # Arguments
+    ///
+    /// * `f` - A closure that determines whether to retain each value
+    /// * `rehash` - A closure that computes the hash for a value, used to
+    ///   update the hopmap when removing entries
+    #[inline]
+    pub fn retain_mut(&mut self, mut f: impl FnMut(&mut V) -> bool, rehash: impl Fn(&V) -> u64) {
+        if self.populated == 0 {
+            return;
+        }
+
+        for idx in 0..(self.max_root_mask.wrapping_add(1) + HOP_RANGE) * LANES {
+            // SAFETY: The call to the `unsafe` function `is_occupied` is safe here
+            // because we are iterating from `0` to the total number of slots,
+            // which is the exact size of the tags array. This ensures that the
+            // index `idx` is always within bounds.
+            if unsafe { self.is_occupied(idx) } {
+                // SAFETY: We have validated `idx` through `is_occupied`, and the bucket
+                // is confirmed to be initialized by an occupied tag.
+                let value = unsafe {
+                    self.buckets_ptr()
+                        .as_mut()
+                        .get_unchecked_mut(idx)
+                        .assume_init_mut()
+                };
+                if !f(value) {
+                    self.populated -= 1;
+                    // SAFETY: We have validated `idx` through `is_occupied`, and the bucket
+                    // is confirmed to be initialized by an occupied tag.
+                    unsafe {
+                        self.clear_occupied(idx);
+                        let hash = rehash(value);
+                        let hop_bucket = self.hopmap_index(hash);
+                        self.hopmap_ptr()
+                            .as_mut()
+                            .get_unchecked_mut(hop_bucket)
+                            .clear((idx - hop_bucket * LANES) / LANES);
+
+                        self.buckets_ptr()
+                            .as_mut()
+                            .get_unchecked_mut(idx)
+                            .assume_init_drop();
+                    }
+                }
+            }
+        }
+
+        self.overflow.retain_mut(|v| f(v));
+    }
+
+    /// Creates an iterator that removes all elements matching a predicate.
+    ///
+    /// The predicate is a closure that takes a reference to a value and returns
+    /// `true` if the value should be removed from the table, or `false` if it
+    /// should be kept.
+    ///
+    /// # Arguments
+    ///
+    /// * `f` - A closure that determines whether to extract each value
+    /// * `rehash` - A closure that computes the hash for a value, used to
+    ///   update the hopmap when removing entries
+    pub fn extract_if<F, R>(&mut self, f: F, rehash: R) -> ExtractIf<'_, V, F, R>
+    where
+        F: FnMut(&mut V) -> bool,
+        R: Fn(&V) -> u64,
+    {
+        ExtractIf {
+            table: self,
+            index: 0,
+            filter: f,
+            rehash,
+            occupied_offset: 0,
+        }
+    }
+}
+
+impl<V> IntoIterator for HashTable<V> {
+    type IntoIter = IntoIter<V>;
+    type Item = V;
+
+    fn into_iter(self) -> Self::IntoIter {
+        IntoIter {
+            table: self,
+            index: 0,
+        }
+    }
 }
 
 /// A view into a single entry in the hash table, which may be vacant or
@@ -2338,6 +2466,49 @@ impl<'a, V> Iterator for Iter<'a, V> {
     }
 }
 
+/// A mutable iterator over the values in a [`HashTable`].
+///
+/// This struct is created by the [`iter_mut`] method on [`HashTable`].
+/// It yields `&mut V` references in an arbitrary order.
+///
+/// [`iter_mut`]: HashTable::iter_mut
+pub struct IterMut<'a, V> {
+    tags: &'a [u8],
+    values: &'a mut [MaybeUninit<V>],
+    overflow_tail: &'a mut [V],
+}
+
+impl<'a, V> Iterator for IterMut<'a, V> {
+    type Item = &'a mut V;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        while !self.tags.is_empty() {
+            let (first_tag, tags) = core::mem::take(&mut self.tags).split_first().unwrap();
+            self.tags = tags;
+            if *first_tag != EMPTY {
+                let (first_value, values) =
+                    core::mem::take(&mut self.values).split_first_mut().unwrap();
+                self.values = values;
+                return Some(unsafe { first_value.assume_init_mut() });
+            } else {
+                let (_first_value, values) =
+                    core::mem::take(&mut self.values).split_first_mut().unwrap();
+                self.values = values;
+            }
+        }
+
+        if !self.overflow_tail.is_empty() {
+            let (first, tail) = core::mem::take(&mut self.overflow_tail)
+                .split_first_mut()
+                .unwrap();
+            self.overflow_tail = tail;
+            return Some(first);
+        }
+
+        None
+    }
+}
+
 /// A draining iterator over the values in a [`HashTable`].
 ///
 /// This struct is created by the [`drain`] method on [`HashTable`].
@@ -2354,7 +2525,9 @@ pub struct Drain<'a, V> {
 
 impl<V> Drop for Drain<'_, V> {
     fn drop(&mut self) {
-        for _ in &mut *self {}
+        if core::mem::needs_drop::<V>() {
+            for _ in &mut *self {}
+        }
     }
 }
 
@@ -2392,6 +2565,125 @@ impl<V> Iterator for Drain<'_, V> {
 
             None
         }
+    }
+}
+
+/// An owning iterator over the values in a [`HashTable`].
+///
+/// This struct is created by the `into_iter` method on [`HashTable`].
+/// It yields owned `V` values and consumes the table as it iterates.
+pub struct IntoIter<V> {
+    table: HashTable<V>,
+    index: usize,
+}
+
+impl<V> Iterator for IntoIter<V> {
+    type Item = V;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.table.is_empty() {
+            return None;
+        }
+
+        // SAFETY: The `unsafe` block is safe because we are iterating through the
+        // table's slots within the valid bounds (`0..total_slots`).
+        // - We guarded against an empty table at the start of `next()`.
+        // - `is_occupied` is safe to call because `self.index` is always less than
+        //   `total_slots`.
+        // - `get_unchecked` is safe for the same reason.
+        // - `assume_init_read` is safe because we only call it after `is_occupied`
+        //   returns true, which guarantees the slot contains an initialized value.
+        unsafe {
+            let total_slots = (self.table.max_root_mask.wrapping_add(1) + HOP_RANGE) * LANES;
+            while self.index < total_slots {
+                if self.table.is_occupied(self.index) {
+                    self.table.clear_occupied(self.index);
+                    let bucket = self.table.buckets_ptr().as_ref().get_unchecked(self.index);
+                    self.index += 1;
+                    return Some(bucket.assume_init_read());
+                }
+                self.index += 1;
+            }
+        }
+        self.table.overflow.pop()
+    }
+}
+
+/// An iterator that removes and yields all elements matching a predicate.
+pub struct ExtractIf<'a, V, F, R> {
+    table: &'a mut HashTable<V>,
+    index: usize,
+    filter: F,
+    rehash: R,
+    occupied_offset: usize,
+}
+
+impl<V, F, R> Iterator for ExtractIf<'_, V, F, R>
+where
+    F: FnMut(&mut V) -> bool,
+    R: Fn(&V) -> u64,
+{
+    type Item = V;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.table.is_empty() {
+            return None;
+        }
+
+        while self.index < (self.table.max_root_mask.wrapping_add(1) + HOP_RANGE) * LANES {
+            let idx = self.index;
+            self.index += 1;
+            // SAFETY: The call to the `unsafe` function `is_occupied` is safe here
+            // because we are iterating from `0` to the total number of slots,
+            // which is the exact size of the tags array. This ensures that the
+            // index `idx` is always within bounds.
+            if unsafe { self.table.is_occupied(idx) } {
+                // SAFETY: We have validated `idx` through `is_occupied`, and the bucket
+                // is confirmed to be initialized by an occupied tag.
+                let value = unsafe {
+                    self.table
+                        .buckets_ptr()
+                        .as_mut()
+                        .get_unchecked_mut(idx)
+                        .assume_init_mut()
+                };
+                if (self.filter)(value) {
+                    self.table.populated -= 1;
+                    // SAFETY: We have validated `idx` through `is_occupied`, and the bucket
+                    // is confirmed to be initialized by an occupied tag.
+                    unsafe {
+                        self.table.clear_occupied(idx);
+                        let hash = (self.rehash)(value);
+                        let hop_bucket = self.table.hopmap_index(hash);
+                        self.table
+                            .hopmap_ptr()
+                            .as_mut()
+                            .get_unchecked_mut(hop_bucket)
+                            .clear((idx - hop_bucket * LANES) / LANES);
+
+                        return Some(
+                            self.table
+                                .buckets_ptr()
+                                .as_mut()
+                                .get_unchecked_mut(idx)
+                                .assume_init_read(),
+                        );
+                    };
+                }
+            }
+        }
+
+        if self.occupied_offset < self.table.overflow.len() {
+            let value = &mut self.table.overflow[self.occupied_offset];
+            if (self.filter)(value) {
+                self.table.populated -= 1;
+                return Some(self.table.overflow.swap_remove(self.occupied_offset));
+            } else {
+                self.occupied_offset += 1;
+            }
+        }
+
+        None
     }
 }
 
@@ -3255,8 +3547,7 @@ mod tests {
         assert_eq!(table.len(), 0);
         assert!(table.is_empty());
 
-        let drained_keys: std::collections::HashSet<u64> =
-            drained.iter().map(|item| item.key).collect();
+        let drained_keys: Vec<u64> = drained.iter().map(|item| item.key).collect();
         for k in 0..8u64 {
             assert!(drained_keys.contains(&k), "Should have drained key {}", k);
         }
@@ -3343,6 +3634,516 @@ mod tests {
 
             assert_eq!(single_table.len(), 0);
             assert!(single_table.is_empty());
+        }
+    }
+
+    #[test]
+    fn retain_empty_table() {
+        let state = HashState::default();
+        let mut table: HashTable<Item> = HashTable::with_capacity(0);
+        table.retain(|_| true, |v| hash_key(&state, v.key));
+        assert_eq!(table.len(), 0);
+    }
+
+    #[test]
+    fn retain_all() {
+        let state = HashState::default();
+        let mut table: HashTable<Item> = HashTable::with_capacity(0);
+
+        for k in 0..100u64 {
+            let hash = hash_key(&state, k);
+            table
+                .entry(hash, |v| v.key == k, |v| hash_key(&state, v.key))
+                .or_insert(Item {
+                    key: k,
+                    value: k as i32,
+                });
+        }
+
+        assert_eq!(table.len(), 100);
+        table.retain(|_| true, |v| hash_key(&state, v.key));
+        assert_eq!(table.len(), 100);
+
+        for k in 0..100u64 {
+            let hash = hash_key(&state, k);
+            assert!(table.find(hash, |v| v.key == k).is_some());
+        }
+    }
+
+    #[test]
+    fn retain_none() {
+        let state = HashState::default();
+        let mut table: HashTable<Item> = HashTable::with_capacity(0);
+
+        for k in 0..100u64 {
+            let hash = hash_key(&state, k);
+            table
+                .entry(hash, |v| v.key == k, |v| hash_key(&state, v.key))
+                .or_insert(Item {
+                    key: k,
+                    value: k as i32,
+                });
+        }
+
+        assert_eq!(table.len(), 100);
+        table.retain(|_| false, |v| hash_key(&state, v.key));
+        assert_eq!(table.len(), 0);
+        assert!(table.is_empty());
+
+        for k in 0..100u64 {
+            let hash = hash_key(&state, k);
+            assert!(table.find(hash, |v| v.key == k).is_none());
+        }
+    }
+
+    #[test]
+    fn retain_even_keys() {
+        let state = HashState::default();
+        let mut table: HashTable<Item> = HashTable::with_capacity(0);
+
+        for k in 0..100u64 {
+            let hash = hash_key(&state, k);
+            table
+                .entry(hash, |v| v.key == k, |v| hash_key(&state, v.key))
+                .or_insert(Item {
+                    key: k,
+                    value: k as i32,
+                });
+        }
+
+        assert_eq!(table.len(), 100);
+        table.retain(|item| item.key % 2 == 0, |v| hash_key(&state, v.key));
+        assert_eq!(table.len(), 50);
+
+        for k in 0..100u64 {
+            let hash = hash_key(&state, k);
+            if k % 2 == 0 {
+                assert!(
+                    table.find(hash, |v| v.key == k).is_some(),
+                    "even key {} should be present",
+                    k
+                );
+            } else {
+                assert!(
+                    table.find(hash, |v| v.key == k).is_none(),
+                    "odd key {} should be absent",
+                    k
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn retain_by_value() {
+        let state = HashState::default();
+        let mut table: HashTable<Item> = HashTable::with_capacity(0);
+
+        for k in 0..50u64 {
+            let hash = hash_key(&state, k);
+            table
+                .entry(hash, |v| v.key == k, |v| hash_key(&state, v.key))
+                .or_insert(Item {
+                    key: k,
+                    value: (k as i32) * 10,
+                });
+        }
+
+        table.retain(|item| item.value < 250, |v| hash_key(&state, v.key));
+        assert_eq!(table.len(), 25);
+
+        for k in 0..50u64 {
+            let hash = hash_key(&state, k);
+            let expected_value = (k as i32) * 10;
+            if expected_value < 250 {
+                assert!(table.find(hash, |v| v.key == k).is_some());
+            } else {
+                assert!(table.find(hash, |v| v.key == k).is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn retain_mut_empty_table() {
+        let state = HashState::default();
+        let mut table: HashTable<Item> = HashTable::with_capacity(0);
+        table.retain_mut(|_| true, |v| hash_key(&state, v.key));
+        assert_eq!(table.len(), 0);
+    }
+
+    #[test]
+    fn retain_mut_modify_and_keep() {
+        let state = HashState::default();
+        let mut table: HashTable<Item> = HashTable::with_capacity(0);
+
+        for k in 0..50u64 {
+            let hash = hash_key(&state, k);
+            table
+                .entry(hash, |v| v.key == k, |v| hash_key(&state, v.key))
+                .or_insert(Item {
+                    key: k,
+                    value: k as i32,
+                });
+        }
+
+        table.retain_mut(
+            |item| {
+                item.value *= 2;
+                true
+            },
+            |v| hash_key(&state, v.key),
+        );
+
+        assert_eq!(table.len(), 50);
+        for k in 0..50u64 {
+            let hash = hash_key(&state, k);
+            let item = table.find(hash, |v| v.key == k).unwrap();
+            assert_eq!(item.value, (k as i32) * 2);
+        }
+    }
+
+    #[test]
+    fn retain_mut_modify_and_filter() {
+        let state = HashState::default();
+        let mut table: HashTable<Item> = HashTable::with_capacity(0);
+
+        for k in 0..100u64 {
+            let hash = hash_key(&state, k);
+            table
+                .entry(hash, |v| v.key == k, |v| hash_key(&state, v.key))
+                .or_insert(Item {
+                    key: k,
+                    value: k as i32,
+                });
+        }
+
+        table.retain_mut(
+            |item| {
+                item.value += 1;
+                item.key % 2 == 0
+            },
+            |v| hash_key(&state, v.key),
+        );
+
+        assert_eq!(table.len(), 50);
+        for k in 0..100u64 {
+            let hash = hash_key(&state, k);
+            if k % 2 == 0 {
+                let item = table.find(hash, |v| v.key == k).unwrap();
+                assert_eq!(item.value, (k as i32) + 1);
+            } else {
+                assert!(table.find(hash, |v| v.key == k).is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn retain_mut_conditional_modification() {
+        let state = HashState::default();
+        let mut table: HashTable<Item> = HashTable::with_capacity(0);
+
+        for k in 0..50u64 {
+            let hash = hash_key(&state, k);
+            table
+                .entry(hash, |v| v.key == k, |v| hash_key(&state, v.key))
+                .or_insert(Item {
+                    key: k,
+                    value: k as i32,
+                });
+        }
+
+        table.retain_mut(
+            |item| {
+                if item.value < 25 {
+                    item.value = -item.value;
+                }
+                true
+            },
+            |v| hash_key(&state, v.key),
+        );
+
+        assert_eq!(table.len(), 50);
+        for k in 0..50u64 {
+            let hash = hash_key(&state, k);
+            let item = table.find(hash, |v| v.key == k).unwrap();
+            if k < 25 {
+                assert_eq!(item.value, -(k as i32));
+            } else {
+                assert_eq!(item.value, k as i32);
+            }
+        }
+    }
+
+    #[test]
+    fn extract_if_empty_table() {
+        let state = HashState::default();
+        let mut table: HashTable<Item> = HashTable::with_capacity(0);
+        let extracted: Vec<Item> = table
+            .extract_if(|_| true, |v| hash_key(&state, v.key))
+            .collect();
+        assert_eq!(extracted.len(), 0);
+        assert_eq!(table.len(), 0);
+    }
+
+    #[test]
+    fn extract_if_none() {
+        let state = HashState::default();
+        let mut table: HashTable<Item> = HashTable::with_capacity(0);
+
+        for k in 0..50u64 {
+            let hash = hash_key(&state, k);
+            table
+                .entry(hash, |v| v.key == k, |v| hash_key(&state, v.key))
+                .or_insert(Item {
+                    key: k,
+                    value: k as i32,
+                });
+        }
+
+        let extracted: Vec<Item> = table
+            .extract_if(|_| false, |v| hash_key(&state, v.key))
+            .collect();
+
+        assert_eq!(extracted.len(), 0);
+        assert_eq!(table.len(), 50);
+
+        for k in 0..50u64 {
+            let hash = hash_key(&state, k);
+            assert!(table.find(hash, |v| v.key == k).is_some());
+        }
+    }
+
+    #[test]
+    fn extract_if_all() {
+        let state = HashState::default();
+        let mut table: HashTable<Item> = HashTable::with_capacity(0);
+
+        for k in 0..50u64 {
+            let hash = hash_key(&state, k);
+            table
+                .entry(hash, |v| v.key == k, |v| hash_key(&state, v.key))
+                .or_insert(Item {
+                    key: k,
+                    value: k as i32,
+                });
+        }
+
+        let extracted: Vec<Item> = table
+            .extract_if(|_| true, |v| hash_key(&state, v.key))
+            .collect();
+
+        assert_eq!(extracted.len(), 50);
+        assert_eq!(table.len(), 0);
+        assert!(table.is_empty());
+
+        for k in 0..50u64 {
+            assert!(extracted.iter().any(|item| item.key == k));
+        }
+    }
+
+    #[test]
+    fn extract_if_odd_keys() {
+        let state = HashState::default();
+        let mut table: HashTable<Item> = HashTable::with_capacity(0);
+
+        for k in 0..100u64 {
+            let hash = hash_key(&state, k);
+            table
+                .entry(hash, |v| v.key == k, |v| hash_key(&state, v.key))
+                .or_insert(Item {
+                    key: k,
+                    value: k as i32,
+                });
+        }
+
+        let extracted: Vec<Item> = table
+            .extract_if(|item| item.key % 2 == 1, |v| hash_key(&state, v.key))
+            .collect();
+
+        assert_eq!(extracted.len(), 50);
+        assert_eq!(table.len(), 50);
+
+        for item in &extracted {
+            assert_eq!(item.key % 2, 1);
+        }
+
+        for k in (0..100u64).step_by(2) {
+            let hash = hash_key(&state, k);
+            assert!(table.find(hash, |v| v.key == k).is_some());
+        }
+
+        for k in (1..100u64).step_by(2) {
+            let hash = hash_key(&state, k);
+            assert!(table.find(hash, |v| v.key == k).is_none());
+        }
+    }
+
+    #[test]
+    fn extract_if_by_value() {
+        let state = HashState::default();
+        let mut table: HashTable<Item> = HashTable::with_capacity(0);
+
+        for k in 0..50u64 {
+            let hash = hash_key(&state, k);
+            table
+                .entry(hash, |v| v.key == k, |v| hash_key(&state, v.key))
+                .or_insert(Item {
+                    key: k,
+                    value: (k as i32) * 10,
+                });
+        }
+
+        let extracted: Vec<Item> = table
+            .extract_if(|item| item.value >= 250, |v| hash_key(&state, v.key))
+            .collect();
+
+        assert_eq!(extracted.len(), 25);
+        assert_eq!(table.len(), 25);
+
+        for item in &extracted {
+            assert!(item.value >= 250);
+        }
+
+        for k in 0..50u64 {
+            let hash = hash_key(&state, k);
+            let expected_value = (k as i32) * 10;
+            if expected_value >= 250 {
+                assert!(table.find(hash, |v| v.key == k).is_none());
+            } else {
+                assert!(table.find(hash, |v| v.key == k).is_some());
+            }
+        }
+    }
+
+    #[test]
+    fn extract_if_partial_consumption() {
+        let state = HashState::default();
+        let mut table: HashTable<Item> = HashTable::with_capacity(0);
+
+        for k in 0..100u64 {
+            let hash = hash_key(&state, k);
+            table
+                .entry(hash, |v| v.key == k, |v| hash_key(&state, v.key))
+                .or_insert(Item {
+                    key: k,
+                    value: k as i32,
+                });
+        }
+
+        let original_len = table.len();
+        let mut extractor = table.extract_if(|item| item.key % 2 == 0, |v| hash_key(&state, v.key));
+
+        let mut extracted = Vec::new();
+        for _ in 0..10 {
+            if let Some(item) = extractor.next() {
+                extracted.push(item);
+            }
+        }
+
+        assert_eq!(extracted.len(), 10);
+
+        assert!(table.len() < original_len);
+        assert!(!table.is_empty());
+    }
+
+    #[test]
+    fn extract_if_with_mutation() {
+        let state = HashState::default();
+        let mut table: HashTable<Item> = HashTable::with_capacity(0);
+
+        for k in 0..50u64 {
+            let hash = hash_key(&state, k);
+            table
+                .entry(hash, |v| v.key == k, |v| hash_key(&state, v.key))
+                .or_insert(Item {
+                    key: k,
+                    value: k as i32,
+                });
+        }
+
+        let extracted: Vec<Item> = table
+            .extract_if(
+                |item| {
+                    let original_key = item.key;
+                    item.value += 100;
+                    original_key >= 25
+                },
+                |v| hash_key(&state, v.key),
+            )
+            .collect();
+
+        assert_eq!(extracted.len(), 25);
+
+        for item in &extracted {
+            assert!(item.value >= 125);
+            assert!(item.key >= 25);
+        }
+
+        assert_eq!(table.len(), 25);
+        for item in table.iter() {
+            assert!(item.key < 25);
+            assert!(item.value >= 100);
+            assert!(item.value < 125);
+        }
+    }
+
+    #[test]
+    fn retain_with_drop_counting() {
+        use alloc::rc::Rc;
+        use core::cell::RefCell;
+
+        let state = HashState::default();
+        let mut table: HashTable<Rc<RefCell<usize>>> = HashTable::with_capacity(0);
+
+        for k in 0..50u64 {
+            let tracked = Rc::new(RefCell::new(k as usize));
+            let hash = hash_key(&state, k);
+            table
+                .entry(
+                    hash,
+                    |v| *v.borrow() == k as usize,
+                    |v| hash_key(&state, *v.borrow() as u64),
+                )
+                .or_insert(tracked);
+        }
+
+        let initial_len = table.len();
+        table.retain(
+            |item| *item.borrow() < 25,
+            |v| hash_key(&state, *v.borrow() as u64),
+        );
+
+        assert_eq!(table.len(), 25);
+        assert_eq!(initial_len, 50);
+    }
+
+    #[test]
+    fn extract_if_maintains_table_integrity() {
+        let state = HashState::default();
+        let mut table: HashTable<Item> = HashTable::with_capacity(0);
+
+        for k in 0..500u64 {
+            let hash = hash_key(&state, k);
+            table
+                .entry(hash, |v| v.key == k, |v| hash_key(&state, v.key))
+                .or_insert(Item {
+                    key: k,
+                    value: k as i32,
+                });
+        }
+
+        let _extracted: Vec<Item> = table
+            .extract_if(|item| item.key % 3 == 0, |v| hash_key(&state, v.key))
+            .collect();
+
+        for k in 0..500u64 {
+            let hash = hash_key(&state, k);
+            let found = table.find(hash, |v| v.key == k);
+            if k % 3 == 0 {
+                assert!(found.is_none(), "key {} should be extracted", k);
+            } else {
+                assert!(found.is_some(), "key {} should remain", k);
+                assert_eq!(found.unwrap().value, k as i32);
+            }
         }
     }
 }
