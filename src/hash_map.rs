@@ -22,6 +22,35 @@ pub struct HashMap<K, V, S> {
     hash_builder: S,
 }
 
+impl<K, V, S> PartialEq for HashMap<K, V, S>
+where
+    K: Eq + Hash,
+    V: PartialEq,
+    S: BuildHasher,
+{
+    fn eq(&self, other: &Self) -> bool {
+        if self.len() != other.len() {
+            return false;
+        }
+
+        for (k, v) in self.iter() {
+            match other.get(k) {
+                Some(ov) if ov == v => continue,
+                _ => return false,
+            }
+        }
+        true
+    }
+}
+
+impl<K, V, S> Eq for HashMap<K, V, S>
+where
+    K: Eq + Hash,
+    V: Eq,
+    S: BuildHasher,
+{
+}
+
 impl<K, V, S> Debug for HashMap<K, V, S>
 where
     K: Debug + Hash + Eq,
@@ -367,6 +396,28 @@ where
     pub fn get(&self, key: &K) -> Option<&V> {
         let hash = self.hash_builder.hash_one(key);
         self.table.find(hash, |(k, _)| k == key).map(|(_, v)| v)
+    }
+
+    /// Returns the key-value pair corresponding to the supplied key.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # #[cfg(any(feature = "std", feature = "foldhash"))]
+    /// # {
+    /// use hop_hash::HashMap;
+    ///
+    /// let mut map: HashMap<i32, &str> = HashMap::new();
+    /// map.insert(1, "a");
+    /// assert_eq!(map.get_key_value(&1), Some((&1, &"a")));
+    /// assert_eq!(map.get_key_value(&2), None);
+    /// # }
+    /// ```
+    pub fn get_key_value(&self, key: &K) -> Option<(&K, &V)> {
+        let hash = self.hash_builder.hash_one(key);
+        self.table
+            .find(hash, |(k, _)| k == key)
+            .map(|(k, v)| (k, v))
     }
 
     /// Returns a mutable reference to the value corresponding to the key.

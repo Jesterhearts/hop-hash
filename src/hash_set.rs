@@ -21,6 +21,26 @@ pub struct HashSet<T, S> {
     hash_builder: S,
 }
 
+impl<T, S> PartialEq for HashSet<T, S>
+where
+    T: Hash + Eq,
+    S: BuildHasher,
+{
+    fn eq(&self, other: &Self) -> bool {
+        if self.len() != other.len() {
+            return false;
+        }
+        self.iter().all(|v| other.contains(v))
+    }
+}
+
+impl<T, S> Eq for HashSet<T, S>
+where
+    T: Hash + Eq,
+    S: BuildHasher,
+{
+}
+
 impl<T, S> Debug for HashSet<T, S>
 where
     T: Debug + Hash + Eq,
@@ -274,6 +294,39 @@ where
     pub fn remove(&mut self, value: &T) -> bool {
         let hash = self.hash_builder.hash_one(value);
         self.table.remove(hash, |v| v == value).is_some()
+    }
+
+    /// Adds a value to the set, replacing the existing value, if any, that is
+    /// equal to the given one. Returns the replaced value.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # #[cfg(any(feature = "std", feature = "foldhash"))]
+    /// # {
+    /// use hop_hash::HashSet;
+    ///
+    /// let mut set: HashSet<i32> = HashSet::new();
+    /// set.insert(1);
+    /// assert_eq!(set.replace(1), Some(1));
+    /// assert_eq!(set.replace(2), None);
+    /// assert_eq!(set.len(), 2);
+    /// # }
+    /// ```
+    pub fn replace(&mut self, value: T) -> Option<T> {
+        let hash = self.hash_builder.hash_one(&value);
+        match self
+            .table
+            .entry(hash, |v| v == &value, |v| self.hash_builder.hash_one(v))
+        {
+            crate::hash_table::Entry::Occupied(mut entry) => {
+                Some(core::mem::replace(entry.get_mut(), value))
+            }
+            crate::hash_table::Entry::Vacant(entry) => {
+                entry.insert(value);
+                None
+            }
+        }
     }
 
     /// Removes and returns the value in the set, if any, that is equal to the
