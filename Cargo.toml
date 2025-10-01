@@ -1,8 +1,12 @@
 [package]
-name    = "hop-hash"
-version = "0.1.0"
-edition = "2024"
-license = "MIT OR Apache-2.0"
+name       = "hop-hash"
+version    = "0.1.0"
+edition    = "2024"
+license    = "MIT OR Apache-2.0"
+categories = [ "data-structures", "algorithms", "no-std", "performance" ]
+keywords   = [ "hashmap", "hashset", "hashtable", "hopscotch", "no-std" ]
+readme     = "README.md"
+repository = "https://github.com/jesterhearts/hop-hash"
 
 [features]
 default              = [ "std", "density-ninety-two" ]
