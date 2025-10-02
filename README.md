@@ -75,7 +75,7 @@ risk of over-allocation for large tables.
 The choice of load factor significantly impacts the performance/memory tradeoff:
 
 - **87.5% (`density-eighty-seven-point-five`, default)**: The highest performance option. This has
-  higher per-entry overhead than `hashbrown` (2 bytes vs 1 byte). Depending on your workload, hashbrown 
+  higher per-entry overhead than `hashbrown` (2 bytes vs 1 byte).
 
 - **92% (`density-ninety-two`)**: Provides a balance between performance and memory
   efficiency for larger tables. Note that for small tables, this can harm performance by as much as
