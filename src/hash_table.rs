@@ -24,7 +24,7 @@
 //! This table is designed around 16-byte sse2 operations to facilitate
 //! performance. The table is a contiguous sequence of 16-entry buckets. An
 //! item's hash maps it to a "root" bucket. For each root, a corresponding
-//! `HopInfo` struct is allocated which tracks the occupancy of the 16 neighbor
+//! `HopInfo` struct is allocated which tracks the occupancy of the 8 neighbor
 //! buckets starting at the root. Each bucket also has a corresponding 16-byte
 //! tag array which tracks a 7-bit fingerprint of the hash for each entry in the
 //! bucket.
@@ -35,12 +35,12 @@
 //! algorithm knows to check all buckets with at least one neighbor. It might be
 //! possible to get more precise bucket scans by tracking a 16-bit mask of which
 //! bucket slots are occupied per neighbor, but this would increase overhead to
-//! 3 bytes per entry and prevent identifying scan targets with a cmp/mask
-//! operation pair. Ultimately, it seems unlikely to provide performance gains
-//! as intra-bucket tag collisions are not common enough (eliminating these
-//! false positives is the major benefit you'd see from this scheme) and
-//! identifying which neighbors to scan is fairly hot in profiles, so slowing
-//! this down at all is likely to hurt rather than help performance.
+//! 3 bytes per entry for 16-way and prevent identifying scan targets with a
+//! cmp/mask operation pair. Ultimately, it seems unlikely to provide
+//! performance gains as intra-bucket tag collisions are not common enough
+//! (eliminating these false positives is the major benefit you'd see from this
+//! scheme) and identifying which neighbors to scan is fairly hot in profiles,
+//! so slowing this down at all is likely to hurt rather than help performance.
 //!
 //! Tags are derived from the top 7-bits of the hash value, with the sign bit
 //! reserved to mark empty slots. This allows the use of just a single load/mask
@@ -562,10 +562,7 @@ impl ProbeHistogram {
 /// ## Performance Characteristics
 /// - **Memory**: 2 bytes per entry overhead (1 byte for tags, 1 byte for hop
 ///   metadata), plus the size of `V`. Note that the table maintains a minimum
-///   capacity of 272 entries (144 for 8-way) due to padding requirements. The
-///   table targets a load factor 92% by default (configurable up to 97%), which
-///   is higher than many hash table implementations, and partially compensates
-///   for the per-entry overhead.
+///   capacity of 272 entries (144 for 8-way) due to padding requirements.
 /// - **Insertion**: Amortized O(1). Individual insertions may trigger bubbling
 ///   operations or resizing, but the cost is amortized across insertions.
 /// - **Lookup**: O(1) with a bounded probe distance of at most 16 buckets (8
@@ -1801,8 +1798,8 @@ impl<V> HashTable<V> {
     ///
     /// # Load Factor
     ///
-    /// The table maintains a load factor of approximately 92% before
-    /// triggering a resize operation.
+    /// The table maintains a load factor of approximately 87.5% (configurable
+    /// up to 97%) before triggering a resize operation.
     pub fn capacity(&self) -> usize {
         self.max_pop
     }

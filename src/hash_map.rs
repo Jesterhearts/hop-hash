@@ -18,9 +18,7 @@ use crate::hash_table::HashTable;
 /// - **Memory**: 2 bytes per entry overhead (1 byte for tags, 1 byte for hop
 ///   metadata), plus the size of `(K, V)`. Note that the table maintains a
 ///   minimum capacity of 272 entries (144 for 8-way) due to padding
-///   requirements. The map targets a load factor 92% by default (configurable
-///   up to 97%), which is higher than many hash map implementations, and
-///   partially compensates for the higher per-entry overhead.
+///   requirements.
 /// - **Insertion**: Amortized O(1). Individual insertions may trigger bubbling
 ///   operations or resizing, but the cost is amortized across insertions.
 /// - **Lookup**: O(1) with a bounded probe distance of at most 16 buckets (8

@@ -77,10 +77,13 @@ The choice of load factor significantly impacts the performance/memory tradeoff:
 - **87.5% (`density-eighty-seven-point-five`, default)**: The highest performance option. This has
   higher per-entry overhead than `hashbrown` (2 bytes vs 1 byte).
 
-- **92% (`density-ninety-two`)**: Provides a balance between performance and memory
-  efficiency for larger tables. Note that for small tables, this can harm performance by as much as
-  50% in benchmarks, although for large tables the impact is much smaller (None to ~10% depending on
-  workload).
+- **92% (`density-ninety-two`)**: Provides a balance between performance and memory efficiency for
+  larger tables. Note that for small tables, this can harm performance by as much as 50% in
+  benchmarks, with the exception of iteration, where the performance **improves** across all table
+  sizes for higher densities. The impact of this setting is much more nuanced at larger table sizes,
+  and may either help or harm performance by a few percent. If you have large tables (>32k entries)
+  I'd recommend benchmarking both 87.5% and 92% density with your workload to see which performs
+  better.
 
 - **97% (`density-ninety-seven`)**: Maximizes memory efficiency at the cost of approximately 3-5%
   performance over `density-ninety-two`. Avoid combining with `eight-way` due to significantly
@@ -96,7 +99,7 @@ performance tuning, as it provides insight into how well the hash function is di
 `hop-hash` combines several design principles for high performance.
 
 ### Hopscotch Hashing Principle
-Each entry is stored within a "neighborhood" of 16 slots from its initial "root" bucket, which is
+Each entry is stored within a "neighborhood" of 8 slots from its initial "root" bucket, which is
 determined by its hash. This ensures that probe sequences for lookups are short and bounded. If an
 item cannot be placed in its neighborhood during insertion, the table finds a nearby empty slot and
 "bubbles" it back by swapping it with other items until the empty slot is inside the required
@@ -143,10 +146,10 @@ configurations.
 
 The benchmarks use randomized data, which I feel better represents real-world usage than sequential
 data. With this randomized data, the two crates benchmark very closely, with `hop-hash`
-outperforming `hashbrown` in some scenarios and vice versa. However, if you have a use case of
-sequential data, where you are reading the same set of keys in the same order multiple times,
-`hashbrown` will far outperform `hop-hash`. The same is true if you have small or medium-small
-tables (<16-32k elements), and you can pre-allocate the table to the correct size.
+outperforming `hashbrown` in some scenarios and vice versa. However, if you are doing only lookups
+on a pre-populated table, `hashbrown` will outperform `hop-hash`, especially if you can pre-allocate
+the table to the correct size. The same is true if you have small or medium-small tables (<16k
+elements).
 
 ## License
 
