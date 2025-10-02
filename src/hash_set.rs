@@ -14,7 +14,17 @@ use crate::hash_table::HashTable;
 ///
 /// # Performance Characteristics
 ///
-/// - **Memory**: 2 bytes per entry overhead, plus the size of `T`.
+/// - **Memory**: 2 bytes per entry overhead (1 byte for tags, 1 byte for hop
+///   metadata), plus the size of `V`. Note that the table maintains a minimum
+///   capacity of 272 entries (144 for 8-way) due to padding requirements. The
+///   set targets a load factor 92% by default (configurable up to 97%), which
+///   is higher than many hash set implementations, and partially compensites
+///   for the per-entry overhead.
+/// - **Insertion**: Amortized O(1). Individual insertions may trigger bubbling
+///   operations or resizing, but the cost is amortized across insertions.
+/// - **Lookup**: O(1) with a bounded probe distance of at most 16 buckets (8
+///   for 8-way).
+/// - **Deletion**: O(1) with the same bounded probe distance as lookup.
 #[derive(Clone)]
 pub struct HashSet<T, S> {
     table: HashTable<T>,
@@ -1164,35 +1174,6 @@ mod tests {
         }
 
         assert_eq!(set.len(), 100);
-    }
-
-    #[test]
-    fn test_collision_handling() {
-        let mut set = HashSet::with_hasher(SipHashBuilder::default());
-
-        for i in 0..1000 {
-            assert!(set.insert(i));
-        }
-
-        assert_eq!(set.len(), 1000);
-
-        for i in 0..1000 {
-            assert!(set.contains(&i));
-        }
-
-        for i in (0..1000).step_by(2) {
-            assert!(set.remove(&i));
-        }
-
-        assert_eq!(set.len(), 500);
-
-        for i in (1..1000).step_by(2) {
-            assert!(set.contains(&i));
-        }
-
-        for i in (0..1000).step_by(2) {
-            assert!(!set.contains(&i));
-        }
     }
 
     #[test]

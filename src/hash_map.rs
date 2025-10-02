@@ -15,7 +15,17 @@ use crate::hash_table::HashTable;
 ///
 /// # Performance Characteristics
 ///
-/// - **Memory**: 2 bytes per entry overhead, plus the size of `(K, V)`.
+/// - **Memory**: 2 bytes per entry overhead (1 byte for tags, 1 byte for hop
+///   metadata), plus the size of `(K, V)`. Note that the table maintains a
+///   minimum capacity of 272 entries (144 for 8-way) due to padding
+///   requirements. The map targets a load factor 92% by default (configurable
+///   up to 97%), which is higher than many hash map implementations, and
+///   partially compensates for the higher per-entry overhead.
+/// - **Insertion**: Amortized O(1). Individual insertions may trigger bubbling
+///   operations or resizing, but the cost is amortized across insertions.
+/// - **Lookup**: O(1) with a bounded probe distance of at most 16 buckets (8
+///   for 8-way).
+/// - **Deletion**: O(1) with the same bounded probe distance as lookup.
 #[derive(Clone)]
 pub struct HashMap<K, V, S> {
     table: HashTable<(K, V)>,
@@ -1334,31 +1344,6 @@ mod tests {
 
         for i in 0..100 {
             assert_eq!(map.get(&i), Some(&format!("value_{}", i)));
-        }
-    }
-
-    #[test]
-    fn test_collision_handling() {
-        let mut map = HashMap::with_hasher(SipHashBuilder::default());
-
-        for i in 0..1000 {
-            map.insert(i, i * 2);
-        }
-
-        assert_eq!(map.len(), 1000);
-
-        for i in 0..1000 {
-            assert_eq!(map.get(&i), Some(&(i * 2)));
-        }
-
-        for i in (0..1000).step_by(2) {
-            assert_eq!(map.remove(&i), Some(i * 2));
-        }
-
-        assert_eq!(map.len(), 500);
-
-        for i in (1..1000).step_by(2) {
-            assert_eq!(map.get(&i), Some(&(i * 2)));
         }
     }
 

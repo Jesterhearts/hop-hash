@@ -1,6 +1,6 @@
 # hop-hash
 
-A high-performance hash table implementation in Rust, utilizing a 16-way hopscotch hashing scheme.
+A high-performance hash table implementation in Rust, utilizing an 8-way hopscotch hashing scheme.
 
 Hopscotch hashing is a technique which attempts to place an item within a fixed distance (a
 "neighborhood") of its ideal bucket during insertion. If this fails, an empty spot is located and
@@ -12,30 +12,44 @@ This crate provides `HashMap` and `HashSet` implementations built on top of a lo
 `HashTable` structure.
 
 ## When to Use `hop-hash`
-`hop-hash` is a good choice when you need a high-performance hash table with predictable lookup
-times, especially for large datasets. It is particularly well-suited for scenarios where:
-- You want to minimize memory overhead while maintaining performance (note that there is a minimum
-  size of 272 entries).
-- You want constant-time worst-case lookups (which can be further bounded by using 8-way
-  neighborhoods).
-- You have a some churn in your dataset (i.e., insertions and deletions), and you have larger tables
-  (>16-32k elements). `hop-hash` performs well with mixed workloads, but `hashbrown` is generally
-  better for read-only or small workloads.
+
+`hop-hash` is designed for scenarios where you need predictable performance characteristics with
+mixed workloads. Consider using `hop-hash` when:
+
+- **You have mixed operations.** The hopscotch algorithm works best on workloads that combine
+  insertions, lookups, and deletions. For read-only workloads, `hashbrown` will perform much better.
+
+- **You need predictable lookup latency.** Lookups are bounded to probing at most 8 buckets (16 with
+  the `sixteen-way` feature), compared to unbounded probe sequences in some hash table designs. This
+  provides more consistent performance characteristics, though `hashbrown` offers superior lookup
+  performance in practice.
+
+- **Memory efficiency matters for your entry size.** For tables with entries of approximately 20
+  bytes or larger, a higher load factor (configurable 92% or 97% vs `hashbrown`'s 87.5%) can
+  offset the additional per-entry metadata overhead (2 bytes vs 1 byte), resulting in comparable or
+  better memory density. Note that this penalizes performance for small tables heavily and there is
+  a minimum table capacity of 144 entries (272 with `sixteen-way`), so this advantage only applies to
+  sufficiently large tables.
+
+### Important Limitations
+
+- **Very small tables:** The minimum capacity requirement and additional overhead means `hop-hash` is not
+  suitable for very small hash tables where memory efficiency is critical.
+
+- **Read-heavy workloads:** For workloads dominated by lookups with few modifications, `hashbrown`'s
+  optimizations provide better performance.
+
+- **Pathological hash functions:** While `hop-hash` is more resilient to poor hash functions than
+  many designs, bad hash functions can still degrade performance. In the case of adversarial inputs,
+  it is possible to force the table into a resize loop that results in an OOM crash. A good hash
+  function will protect against this, just like it will protect any hash table from DOS attacks.
 
 ## Features
 
-- **High Performance**: Optimized for fast lookups, insertions, and removals with a default target
-  load factor of 92%.
-- **Constant-Time Lookups**: Hopscotch hashing guarantees entries are within a small, fixed-size
-  neighborhood of their ideal location, ensuring short and predictable probe distances.
-- **SIMD Acceleration**: Leverages SSE2 instructions for parallel scanning of 16-entry buckets,
-  significantly accelerating lookups.
-- **Efficient Memory Layout**: A compact, contiguous memory structure with a low overhead of 2 bytes
-  per entry for metadata.
-- **Robust Overflow Handling**: Includes an overflow mechanism to gracefully handle pathological
-  hash inputs without uncontrolled memory growth, at the cost of degraded performance in such
-  scenarios.
-- **Few Dependencies**: Pure Rust implementation with two dependencies - `cfg-if`, and `foldhash` (optional).
+- **Worst-Case Constant-Time Lookups**: Hopscotch hashing guarantees entries are within a small,
+  fixed-size neighborhood of their ideal location, ensuring short and predictable probe distances.
+- **Few Dependencies**: Pure Rust implementation with two dependencies - `cfg-if`, and `foldhash`
+  (optional).
 
 ## Basic Usage
 ```rust
@@ -51,24 +65,26 @@ assert_eq!(map.get(&"key2"), None);
 ```
 
 ## Choosing a Neighborhood Size
-The default choice of a 16-entry neighborhood balances performance and memory usage effectively. A
-smaller neighborhood (e.g., 8 entries, via the `eight-way` feature) would reduce the fixed memory
-overhead of the padding buckets and put a tighter bound on maximum probe length, but it has a
-slightly increased risk of the table over-allocating space due to failed attempts to bubble an empty
-slot into the neighborhood.
-
-In benchmarks, the choice of neighborhood size (8 vs 16) has a negligible impact on performance for
-larger tables, but can greatly improve performance for small tables. You should use 8-entry
-neighborhoods if you want to minimize your worst-case probe length and are okay with a slightly
-increased risk of over-allocation or are using smaller tables.
+The default neighborhood size is 8 (`eight-way`), which provides the best overall performance across
+all table sizes and workloads. **Important Caveat:** If you choose to use the `density-ninety-seven`
+feature, you should also use the `sixteen-way` feature, as 8-way with 97% load factor has a high
+risk of over-allocation for large tables.
 
 ## Choosing a Target Load Factor
-The default target load factor of 92% (`density-ninety-two` feature) is chosen to balance memory
-efficiency and performance. If you prioritize memory efficiency and are willing to accept a slight
-performance trade-off, you might consider using a target load factor of 97% (`density-ninety-seven`
-feature). This trades about 3-5% performance for about 5% decreased memory usage in benchmarks. Note
-that when combined with the `eight-way` feature, you significantly increase the risk of
-over-allocation, so be careful combining those two features if you are trying to conserve memory.
+
+The choice of load factor significantly impacts the performance/memory tradeoff:
+
+- **87.5% (`density-eighty-seven-point-five`, default)**: The highest performance option. This has
+  higher per-entry overhead than `hashbrown` (2 bytes vs 1 byte). Depending on your workload, hashbrown 
+
+- **92% (`density-ninety-two`)**: Provides a balance between performance and memory
+  efficiency for larger tables. Note that for small tables, this can harm performance by as much as
+  50% in benchmarks, although for large tables the impact is much smaller (None to ~10% depending on
+  workload).
+
+- **97% (`density-ninety-seven`)**: Maximizes memory efficiency at the cost of approximately 3-5%
+  performance over `density-ninety-two`. Avoid combining with `eight-way` due to significantly
+  increased over-allocation risk.
 
 ## Probe Length Debugging
 The `HashTable` struct includes a `probe_histogram` method (feature `stats`) that returns a
@@ -92,7 +108,7 @@ All data is stored in a single, contiguous, type-erased allocation with the stru
 array-of-structs approach.
 
 ### Neighborhood and Occupancy (`HopInfo`)
-For each 16-entry root bucket, a corresponding `HopInfo` struct tracks the occupancy of the 16
+For each 16-entry root bucket, a corresponding `HopInfo` struct tracks the occupancy of the 8
 neighbor buckets. This allows for fast scans to see which neighbors need to be probed during
 lookups.
 
@@ -106,28 +122,16 @@ insertions and lookups.
 ### Sizing and Padding
 Table sizes are always a power of two, allowing for fast bitwise masking (`hash & mask`) to
 determine an item's root bucket instead of a slower modulo operation. An additional pad of
-`HOP_RANGE` (16) buckets is added to the end of the table to allow the final neighborhood to span a
-full 16 buckets without needing complex and expensive wrapping logic.
-
-### Overflow Handling
-In the rare event that an entry cannot be placed within its neighborhood (e.g., due to extreme hash
-collisions), it is stored in a separate overflow vector. This is a safety measure to avoid an
-infinite resize loop and out-of-memory errors in the face of pathological hash inputs. The odds of
-this overflow being used with a decent hash function are effectively zero.
+`HOP_RANGE` (8) buckets is added to the end of the table to allow the final neighborhood to span a
+full 8 buckets without needing complex and expensive wrapping logic.
 
 ## Limitations
 
 - **Hash Function Dependency**: Performance is highly dependent on the quality of the hash function.
-  A poor hash function can lead to increased collisions and degrade performance. That being said,
-  this table design is more resilient to poor hash functions than many other designs.
+  A poor hash function can lead to increased collisions and degrade performance.
 - **Memory Usage**: The table's capacity grows in powers of two and is not optimized for very small
   data sets due to a minimum reservation size (a minimum of 272 entries for 16-way, 144 for 8-way).
 - **Key Constraints**: The `Eq` and `Hash` implementations for keys must be consistent.
-
-## Implementation Notes & Quirks
-- **Load Factor Choice**: The table doesn't support a load factor of 87.5% (7/8). While easy to
-  implement, it showed no significant benchmark impact, so the slightly higher memory usage was not
-  deemed worth it.
 
 ## A Note on Benchmarks
 

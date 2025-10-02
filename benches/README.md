@@ -28,7 +28,8 @@ In all cases, Hashbrown is represented with the red line, and Hop-hash is repres
     small value types, and increases for large value types.
 - Run in Windows safe mode without networking to reduce background noise, pinned to a single CPU
   core, with realtime priority. A script was used to automate re-running benchmarks until the
-  results had a run-to-run variance and total variance in one direction across 3 runs of under 5%.
+  results had a run-to-run variance under 5% and total variance in one direction across 3 runs of
+  under 5%.
 
 
 ### Mixed Workloads
@@ -525,4 +526,4 @@ at a load factor of 87.5%.
 | 32768  | 49 ns/op  | 51 ns/op  | **hashbrown** is **1.03x** faster |
 | 65536  | 106 ns/op | 104 ns/op | **hop_hash** is **1.01x** faster  |
 | 131072 | 168 ns/op | 173 ns/op | **hashbrown** is **1.03x** faster |
-|        |
+| 262144 | 222 ns/op | 240 ns/op | **hashbrown** is **1.08x** faster |

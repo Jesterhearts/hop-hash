@@ -10,12 +10,14 @@ readme       = "README.md"
 repository   = "https://github.com/jesterhearts/hop-hash"
 
 [features]
-default              = [ "std", "density-ninety-two", "foldhash" ]
-density-ninety-two   = [  ]
-density-ninety-seven = [  ]
-eight-way            = [  ]
-foldhash             = [ "dep:foldhash" ]
-std                  = [  ]
+default                         = [ "std", "foldhash", "density-eighty-seven-point-five", "eight-way" ]
+density-eighty-seven-point-five = [  ]
+density-ninety-two              = [  ]
+density-ninety-seven            = [  ]
+eight-way                       = [  ]
+foldhash                        = [ "dep:foldhash" ]
+sixteen-way                     = [  ]
+std                             = [  ]
 # Enable functions that allow inspecting low-level hash table statistics.
 stats = [  ]
 
@@ -44,5 +46,5 @@ name              = "stats_demo"
 required-features = [ "stats", "std" ]
 
 [package.metadata.docs.rs]
-features     = [ "std", "density-ninety-two", "stats", "foldhash" ]
+features     = [ "std", "density-eighty-seven-point-five", "stats", "foldhash" ]
 rustdoc-args = [ "--generate-link-to-definition" ]

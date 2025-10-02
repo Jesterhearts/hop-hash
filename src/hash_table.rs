@@ -8,13 +8,9 @@
 //! the fixed range. If bubbling fails (typically due to very high load), the
 //! table is resized and insertion re-attempted.  This has the nice effect that
 //! lookups and removals have constant-time worst case behavior (and insertion
-//! has amortized constant time behavior), rather than O(N). This table
-//! implementation does include an overflow mechanism which could lead to O(N)
-//! behavior, but unless you have a degenerate hash function the odds of ever
-//! seeing this used are so astronomically low as to be effectively zero.
-//! Overflow requires > 256 items to all hash to the same root bucket, and
-//! survive resizing, which means they would essentially need to have the same
-//! hash.
+//! has amortized constant time behavior), rather than O(N). With pathological
+//! or adversarial inputs, resizing can end up in an infinite loop that results
+//! in OOM, so you still need a good hash function.
 //!
 //! [`HashTable<V>`] stores values of type `V` and provides fast insertion,
 //! lookup, and removal operations. This is a fairly low-level structure that
@@ -82,26 +78,12 @@
 //! size_of(V)`), but would complicate the code significantly, particularly
 //! during bubbling.
 //!
-//! The overflow vector is strictly a safety measure to avoid OOM in the face of
-//! pathological hash inputs. Without this measure, pathological inputs would
-//! constantly fill up the fixed neighborhood -> trigger a resize -> fill up the
-//! neighborhood -> trigger a resize loop, leading to OOM. With the overflow,
-//! this is avoided at the cost of O(N) lookup times and degraded performance,
-//! which seems like a reasonable trade-off.
-//!
 //! ### Other Quirks & Oddities
 //!
 //! The table makes use of `ptr::write_bytes(0)` to initialize the hopinfo
 //! arrays rather than using `alloc_zeroed`. This makes a massive difference in
 //! benchmarks on my machine (30%) for some reason. I suspect it's a
 //! benchmarking artifact.
-//!
-//! The table doesn't support 87.5% load (7/8) even though it would be easy to
-//! implement because it doesn't seem to impact benchmarks at all, so
-//! sacrificing 5% memory doesn't seem worth it. This is likely due to how
-//! lookups work, with something like 80-90% of items residing in their ideal
-//! bucket even at 92% load, so the extra few percent gained by going to 87.5%
-//! load don't seem to help much.
 //!
 //! The table _always_ examines bucket 0 during lookups without even checking
 //! the neighborhood layout. During testing, bucket 0 was found to almost always
@@ -158,12 +140,18 @@ use core::ptr::NonNull;
 use cfg_if::cfg_if;
 
 cfg_if! {
-    if #[cfg(feature = "density-ninety-seven")] {
+    // Try to save someone if they are in a situation where multiple versions of the crate
+    // specify eight-way, density-ninety-two, and density-ninety-seven.
+    if #[cfg(all(feature = "density-ninety-two", feature = "eight-way"))] {
+        const TARGET_LOAD: f32 = 0.92;
+    } else if #[cfg(feature = "density-ninety-seven")] {
         const TARGET_LOAD: f32 = 0.97;
     } else if #[cfg(feature = "density-ninety-two")] {
         const TARGET_LOAD: f32 = 0.92;
+    } else if #[cfg(feature = "density-eighty-seven-point-five")] {
+        const TARGET_LOAD: f32 = 0.875;
     } else {
-        const TARGET_LOAD: f32 = 0.92;
+        const TARGET_LOAD: f32 = 0.875;
     }
 }
 
@@ -210,10 +198,12 @@ const EMPTY: u8 = 0x80;
 cfg_if! {
     if #[cfg(feature = "eight-way")] {
         const HOP_RANGE: usize = 8;
-        const FULL_MASK: u16 = 0xFF;
-    } else {
+    // If they didn't specify and picked density-ninety-seven, assume they want 16-way
+    // since 8-way with 97% is highly likely to over-allocate for large tables.
+    } else if #[cfg(any(feature = "sixteen-way",  feature = "density-ninety-seven"))] {
         const HOP_RANGE: usize = 16;
-        const FULL_MASK: u16 = 0xFFFF;
+    }else {
+        const HOP_RANGE: usize = 8;
     }
 }
 
@@ -338,40 +328,6 @@ impl HopInfo {
         }
     }
 
-    #[inline(always)]
-    fn is_full(&self) -> bool {
-        if (cfg!(target_arch = "x86") || cfg!(target_arch = "x86_64"))
-            && cfg!(target_feature = "sse2")
-        {
-            // SAFETY: We have ensure that we are on x86/x86_64 with SSE2 support
-            unsafe { self.is_full_sse2() }
-        } else {
-            for i in 0..HOP_RANGE {
-                if self.neighbors[i] < LANES as u8 {
-                    return false;
-                }
-            }
-            true
-        }
-    }
-
-    /// Check if all neighbor slots are occupied (equal to LANES).
-    ///
-    /// # Safety
-    /// - Caller must ensure the CPU supports SSE2 instructions.
-    #[inline(always)]
-    unsafe fn is_full_sse2(&self) -> bool {
-        // SAFETY: We have ensured that `HopInfo` is `#[repr(C, align(16))]`,
-        // with `neighbors` at offset 0. This guarantees 16-byte alignment,
-        // making it safe to load via `_mm_load_si128`.
-        unsafe {
-            let data = _mm_load_si128(self.neighbors.as_ptr() as *const __m128i);
-            let max = _mm_set1_epi8(LANES as i8);
-            let cmp = _mm_cmpeq_epi8(data, max);
-            _mm_movemask_epi8(cmp) as u16 == FULL_MASK
-        }
-    }
-
     /// Clear neighbor count at the given index
     ///
     /// # Safety
@@ -446,8 +402,6 @@ pub struct DebugStats {
     pub total_slots: usize,
     /// Number of slots currently occupied
     pub occupied_slots: usize,
-    /// Number of entries in overflow storage
-    pub overflow_entries: usize,
     /// Load factor (populated / capacity)
     pub load_factor: f64,
     /// Slot utilization (occupied_slots / total_slots)
@@ -476,7 +430,6 @@ impl DebugStats {
             self.total_slots,
             self.slot_utilization * 100.0
         );
-        println!("Overflow: {} entries", self.overflow_entries);
         println!("Total Allocated: {} bytes", self.total_bytes);
         println!(
             "Memory: {} bytes wasted ({:.02}%)",
@@ -512,10 +465,7 @@ pub struct ProbeHistogram {
     /// (probe length = 3), and those neighbor buckets contain 2, 4, and 1 items
     /// respectively, then `probe_length_by_count[2]` (for L=3) would be
     /// incremented by 7 (2+4+1).
-    ///
-    /// The final index `[HOP_RANGE]` stores the number of entries in the
-    /// overflow vector.
-    pub probe_length_by_count: [usize; HOP_RANGE + 1],
+    pub probe_length_by_count: [usize; HOP_RANGE],
     /// Distribution of number of entries in each bucket relative to its root.
     /// This shows how tightly clustered entries are around their ideal bucket
     /// (bucket 0).
@@ -593,10 +543,6 @@ impl ProbeHistogram {
             println!("{} | {} ({})", label, bar, count);
         }
 
-        let of_count = self.probe_length_by_count[HOP_RANGE];
-        let of_bar = make_bar(of_count);
-        println!("OF | {} ({})", of_bar, of_count);
-
         println!("Bucket distribution (in-table entries):");
         for (i, &count) in self.bucket_distribution.iter().enumerate() {
             let label = alloc::format!("{:>2}", i);
@@ -614,13 +560,20 @@ impl ProbeHistogram {
 /// predicate for each operation.
 ///
 /// ## Performance Characteristics
-///
-/// - **Memory**: 2 bytes per entry overhead, plus the size of `V`.
+/// - **Memory**: 2 bytes per entry overhead (1 byte for tags, 1 byte for hop
+///   metadata), plus the size of `V`. Note that the table maintains a minimum
+///   capacity of 272 entries (144 for 8-way) due to padding requirements. The
+///   table targets a load factor 92% by default (configurable up to 97%), which
+///   is higher than many hash table implementations, and partially compensates
+///   for the per-entry overhead.
+/// - **Insertion**: Amortized O(1). Individual insertions may trigger bubbling
+///   operations or resizing, but the cost is amortized across insertions.
+/// - **Lookup**: O(1) with a bounded probe distance of at most 16 buckets (8
+///   for 8-way).
+/// - **Deletion**: O(1) with the same bounded probe distance as lookup.
 pub struct HashTable<V> {
     layout: DataLayout,
     alloc: NonNull<u8>,
-
-    overflow: Vec<V>,
 
     populated: usize,
     max_pop: usize,
@@ -640,7 +593,6 @@ impl<V> Debug for HashTable<V> {
                 .field("metadata", &"empty")
                 .field("populated", &self.populated)
                 .field("capacity", &self.max_pop)
-                .field("has_overflow", &self.overflow.len())
                 .finish();
         }
 
@@ -691,7 +643,6 @@ impl<V> Debug for HashTable<V> {
                 )
                 .field("populated", &self.populated)
                 .field("capacity", &self.max_pop)
-                .field("has_overflow", &self.overflow.len())
                 .finish()
         }
     }
@@ -702,7 +653,7 @@ where
     V: Clone,
 {
     fn clone(&self) -> Self {
-        let mut new_table = Self {
+        let new_table = Self {
             layout: self.layout,
             alloc: if self.layout.layout.size() == 0 {
                 NonNull::dangling()
@@ -725,7 +676,6 @@ where
                     NonNull::new_unchecked(raw_alloc)
                 }
             },
-            overflow: Vec::new(),
             populated: self.populated,
             max_pop: self.max_pop,
             max_root_mask: self.max_root_mask,
@@ -754,7 +704,6 @@ where
                         .write(src_buckets.get_unchecked(i).assume_init_ref().clone());
                 }
             }
-            new_table.overflow = self.overflow.clone();
 
             debug_assert!(new_table.populated == self.populated);
 
@@ -822,7 +771,6 @@ impl<V> HashTable<V> {
         Self {
             layout,
             alloc,
-            overflow: Vec::new(),
             populated: 0,
             max_pop: target_load_factor(capacity.base * LANES),
             max_root_mask: capacity.max_root_mask(),
@@ -888,7 +836,6 @@ impl<V> HashTable<V> {
         Iter {
             table: self,
             bucket_index: 0,
-            overflow_index: 0,
         }
     }
 
@@ -905,7 +852,6 @@ impl<V> HashTable<V> {
             IterMut {
                 tags: self.tags_ptr().as_ref(),
                 values: self.buckets_ptr().as_mut(),
-                overflow_tail: &mut self.overflow,
             }
         }
     }
@@ -930,7 +876,6 @@ impl<V> HashTable<V> {
             return Drain {
                 total_slots,
                 occupied: Box::new([]),
-                overflow: core::mem::take(&mut self.overflow),
                 table: self,
                 bucket_index: 0,
             };
@@ -966,7 +911,6 @@ impl<V> HashTable<V> {
         Drain {
             total_slots,
             occupied,
-            overflow: core::mem::take(&mut self.overflow),
             table: self,
             bucket_index: 0,
         }
@@ -1013,7 +957,6 @@ impl<V> HashTable<V> {
         }
 
         self.populated = 0;
-        self.overflow.clear();
     }
 
     /// Shrinks the capacity of the hash table as much as possible.
@@ -1025,7 +968,7 @@ impl<V> HashTable<V> {
     /// If the table is empty, it will be completely deallocated and reset to
     /// a zero-capacity state.
     pub fn shrink_to_fit(&mut self, rehash: impl Fn(&V) -> u64) {
-        if self.populated == 0 && self.overflow.is_empty() {
+        if self.populated == 0 {
             if self.layout.layout.size() != 0 {
                 // SAFETY: We have ensured that the allocation is valid before
                 // deallocating.
@@ -1041,7 +984,7 @@ impl<V> HashTable<V> {
             return;
         }
 
-        let required = self.populated + self.overflow.len();
+        let required = self.populated;
         let new_capacity: Capacity = target_load_factor_inverse(required.div_ceil(LANES)).into();
         if new_capacity.max_root_mask() < self.max_root_mask {
             self.do_resize_rehash(new_capacity, &rehash);
@@ -1117,18 +1060,6 @@ impl<V> HashTable<V> {
             }
 
             return Some(value);
-        }
-
-        if self.overflow.is_empty() {
-            return None;
-        }
-
-        for (idx, overflow) in self.overflow.iter().enumerate() {
-            if eq(overflow) {
-                self.populated -= 1;
-                let value = self.overflow.swap_remove(idx);
-                return Some(value);
-            }
         }
 
         None
@@ -1359,29 +1290,7 @@ impl<V> HashTable<V> {
                 n_index: index - hop_bucket * LANES,
                 table: self,
                 root_index: hop_bucket,
-                overflow_index: None,
             });
-        }
-
-        if !self.overflow.is_empty() {
-            #[cold]
-            #[inline(never)]
-            fn search_overflow<V>(overflow: &[V], eq: &impl Fn(&V) -> bool) -> Option<usize> {
-                for (idx, overflow) in overflow.iter().enumerate() {
-                    if eq(overflow) {
-                        return Some(idx);
-                    }
-                }
-                None
-            }
-            if let Some(overflow_index) = search_overflow(&self.overflow, &eq) {
-                return Entry::Occupied(OccupiedEntry {
-                    n_index: 0,
-                    table: self,
-                    root_index: hop_bucket,
-                    overflow_index: Some(overflow_index),
-                });
-            }
         }
 
         // SAFETY: We have ensured `hop_bucket` is within bounds, as it is derived from
@@ -1429,7 +1338,6 @@ impl<V> HashTable<V> {
                 hopmap_root: hop_bucket,
                 hash,
                 n_index: absolute_empty_idx - hop_bucket * LANES,
-                is_overflow: false,
             };
         }
 
@@ -1485,23 +1393,6 @@ impl<V> HashTable<V> {
                     absolute_empty_idx = absolute_idx;
                 }
             } else {
-                // SAFETY: We have ensured `hop_bucket` is within hopmap bounds.
-                let is_full = unsafe {
-                    self.hopmap_ptr()
-                        .as_ref()
-                        .get_unchecked(hop_bucket)
-                        .is_full()
-                };
-                if is_full {
-                    return VacantEntry {
-                        table: self,
-                        hopmap_root: hop_bucket,
-                        hash,
-                        n_index: 0,
-                        is_overflow: true,
-                    };
-                }
-
                 self.resize_rehash(rehash);
                 // SAFETY: We have ensured `hop_bucket` is within the hopmap bounds.
                 return unsafe { self.do_vacant_lookup(hash, self.hopmap_index(hash), rehash) };
@@ -1516,7 +1407,6 @@ impl<V> HashTable<V> {
             table: self,
             hopmap_root: hop_bucket,
             hash,
-            is_overflow: false,
         }
     }
 
@@ -1653,17 +1543,7 @@ impl<V> HashTable<V> {
             });
         }
 
-        if self.overflow.is_empty() {
-            return None;
-        }
-
-        self.find_overflow(eq)
-    }
-
-    #[cold]
-    #[inline(never)]
-    fn find_overflow(&self, eq: impl Fn(&V) -> bool) -> Option<&V> {
-        self.overflow.iter().find(|overflow| eq(overflow))
+        None
     }
 
     /// Finds a value in the table by hash and equality predicate, returning a
@@ -1698,17 +1578,7 @@ impl<V> HashTable<V> {
             });
         }
 
-        if self.overflow.is_empty() {
-            return None;
-        }
-
-        self.find_overflow_mut(eq)
-    }
-
-    #[cold]
-    #[inline(never)]
-    fn find_overflow_mut(&mut self, eq: impl Fn(&V) -> bool) -> Option<&mut V> {
-        self.overflow.iter_mut().find(|overflow| eq(overflow))
+        None
     }
 
     #[inline]
@@ -1767,7 +1637,7 @@ impl<V> HashTable<V> {
 
             return;
         }
-        let overflows = core::mem::take(&mut self.overflow);
+        let mut needing_resize = Vec::new();
         // SAFETY: old_alloc valid, old_empty_words calculated from valid old capacity
         let old_emptymap: NonNull<[u8]> = unsafe {
             NonNull::slice_from_raw_parts(
@@ -1882,14 +1752,14 @@ impl<V> HashTable<V> {
                                 self.set_occupied(idx, hashtag(moved_hash));
                                 idx = absolute_idx;
                             } else {
-                                self.overflow.push(value);
+                                needing_resize.push((value, hash));
                                 continue 'tags;
                             }
                         }
                         idx
                     }
                     None => {
-                        self.overflow.push(value);
+                        needing_resize.push((value, hash));
                         continue;
                     }
                 };
@@ -1910,10 +1780,10 @@ impl<V> HashTable<V> {
                     .write(value);
             }
 
-            for overflow in overflows {
-                let hash = rehash(&overflow);
+            for (needs_resize, hash) in needing_resize {
                 let bucket = self.hopmap_index(hash);
-                self.do_vacant_lookup(hash, bucket, rehash).insert(overflow);
+                self.do_vacant_lookup(hash, bucket, rehash)
+                    .insert(needs_resize);
             }
 
             if old_layout.layout.size() != 0 {
@@ -1950,7 +1820,7 @@ impl<V> HashTable<V> {
             populated: self.populated,
             buckets: self.max_root_mask.wrapping_add(1) + HOP_RANGE,
             probe_length_by_bucket: [0; HOP_RANGE],
-            probe_length_by_count: [0; HOP_RANGE + 1],
+            probe_length_by_count: [0; HOP_RANGE],
             bucket_distribution: [0; HOP_RANGE],
         };
 
@@ -1987,8 +1857,6 @@ impl<V> HashTable<V> {
                     }
                 }
             }
-
-            probe_hist.probe_length_by_count[HOP_RANGE] = self.overflow.len();
         }
 
         probe_hist
@@ -2024,7 +1892,6 @@ impl<V> HashTable<V> {
             capacity: self.max_pop,
             total_slots,
             occupied_slots,
-            overflow_entries: self.overflow.len(),
             load_factor: if self.max_pop == 0 {
                 0.0
             } else {
@@ -2108,8 +1975,6 @@ impl<V> HashTable<V> {
                 }
             }
         }
-
-        self.overflow.retain_mut(|v| f(v));
     }
 
     /// Creates an iterator that removes all elements matching a predicate.
@@ -2133,7 +1998,6 @@ impl<V> HashTable<V> {
             index: 0,
             filter: f,
             rehash,
-            occupied_offset: 0,
         }
     }
 }
@@ -2245,7 +2109,6 @@ pub struct VacantEntry<'a, V> {
     hopmap_root: usize,
     hash: u64,
     n_index: usize,
-    is_overflow: bool,
 }
 
 impl<'a, V> VacantEntry<'a, V> {
@@ -2256,9 +2119,6 @@ impl<'a, V> VacantEntry<'a, V> {
     /// hopscotch algorithm.
     pub fn insert(self, value: V) -> &'a mut V {
         self.table.populated += 1;
-        if self.is_overflow {
-            return self.insert_overflow(value);
-        }
 
         // SAFETY: A `VacantEntry` is only constructed by `do_vacant_lookup` with:
         // - A valid `hopmap_root` where `hopmap_root <= max_root_mask`, ensuring it
@@ -2290,13 +2150,6 @@ impl<'a, V> VacantEntry<'a, V> {
                 .write(value)
         }
     }
-
-    #[cold]
-    #[inline(never)]
-    fn insert_overflow(self, value: V) -> &'a mut V {
-        self.table.overflow.push(value);
-        self.table.overflow.last_mut().unwrap()
-    }
 }
 
 /// A view into an occupied entry in the hash table.
@@ -2310,7 +2163,6 @@ pub struct OccupiedEntry<'a, V> {
     table: &'a mut HashTable<V>,
     root_index: usize,
     n_index: usize,
-    overflow_index: Option<usize>,
 }
 
 // Safety invariant for OccupiedEntry methods:
@@ -2325,10 +2177,6 @@ pub struct OccupiedEntry<'a, V> {
 impl<'a, V> OccupiedEntry<'a, V> {
     /// Gets a reference to the value in the entry.
     pub fn get(&self) -> &V {
-        if let Some(overflow_index) = self.overflow_index {
-            return &self.table.overflow[overflow_index];
-        }
-
         // SAFETY: See safety invariant comment above `impl` block.
         unsafe {
             self.table
@@ -2341,10 +2189,6 @@ impl<'a, V> OccupiedEntry<'a, V> {
 
     /// Gets a mutable reference to the value in the entry.
     pub fn get_mut(&mut self) -> &mut V {
-        if let Some(overflow_index) = self.overflow_index {
-            return &mut self.table.overflow[overflow_index];
-        }
-
         // SAFETY: See safety invariant comment above `impl` block.
         unsafe {
             self.table
@@ -2358,10 +2202,6 @@ impl<'a, V> OccupiedEntry<'a, V> {
     /// Converts the entry into a mutable reference to the value with the
     /// lifetime of the entry.
     pub fn into_mut(self) -> &'a mut V {
-        if let Some(overflow_index) = self.overflow_index {
-            return &mut self.table.overflow[overflow_index];
-        }
-
         // SAFETY: See safety invariant comment above `impl` block.
         unsafe {
             self.table
@@ -2375,11 +2215,6 @@ impl<'a, V> OccupiedEntry<'a, V> {
     /// Removes the entry from the table and returns the value.
     pub fn remove(self) -> V {
         self.table.populated -= 1;
-
-        if let Some(overflow_index) = self.overflow_index {
-            let value = self.table.overflow.swap_remove(overflow_index);
-            return value;
-        }
 
         // SAFETY: This is safe for the same reasons as `get()`: the entry is
         // guaranteed to point to a valid, initialized element. We can therefore
@@ -2420,7 +2255,6 @@ impl<'a, V> OccupiedEntry<'a, V> {
 pub struct Iter<'a, V> {
     table: &'a HashTable<V>,
     bucket_index: usize,
-    overflow_index: usize,
 }
 
 impl<'a, V> Iterator for Iter<'a, V> {
@@ -2455,12 +2289,6 @@ impl<'a, V> Iterator for Iter<'a, V> {
                 self.bucket_index += 1;
             }
 
-            if self.overflow_index < self.table.overflow.len() {
-                let item = &self.table.overflow[self.overflow_index];
-                self.overflow_index += 1;
-                return Some(item);
-            }
-
             None
         }
     }
@@ -2475,7 +2303,6 @@ impl<'a, V> Iterator for Iter<'a, V> {
 pub struct IterMut<'a, V> {
     tags: &'a [u8],
     values: &'a mut [MaybeUninit<V>],
-    overflow_tail: &'a mut [V],
 }
 
 impl<'a, V> Iterator for IterMut<'a, V> {
@@ -2497,14 +2324,6 @@ impl<'a, V> Iterator for IterMut<'a, V> {
             }
         }
 
-        if !self.overflow_tail.is_empty() {
-            let (first, tail) = core::mem::take(&mut self.overflow_tail)
-                .split_first_mut()
-                .unwrap();
-            self.overflow_tail = tail;
-            return Some(first);
-        }
-
         None
     }
 }
@@ -2519,7 +2338,6 @@ pub struct Drain<'a, V> {
     occupied: Box<[u8]>,
     total_slots: usize,
     table: &'a mut HashTable<V>,
-    overflow: Vec<V>,
     bucket_index: usize,
 }
 
@@ -2556,11 +2374,6 @@ impl<V> Iterator for Drain<'_, V> {
                 }
 
                 self.bucket_index += 1;
-            }
-
-            if !self.overflow.is_empty() {
-                let value = self.overflow.pop().unwrap();
-                return Some(value);
             }
 
             None
@@ -2604,8 +2417,9 @@ impl<V> Iterator for IntoIter<V> {
                 }
                 self.index += 1;
             }
+
+            None
         }
-        self.table.overflow.pop()
     }
 }
 
@@ -2615,7 +2429,6 @@ pub struct ExtractIf<'a, V, F, R> {
     index: usize,
     filter: F,
     rehash: R,
-    occupied_offset: usize,
 }
 
 impl<V, F, R> Iterator for ExtractIf<'_, V, F, R>
@@ -2670,16 +2483,6 @@ where
                         );
                     };
                 }
-            }
-        }
-
-        if self.occupied_offset < self.table.overflow.len() {
-            let value = &mut self.table.overflow[self.occupied_offset];
-            if (self.filter)(value) {
-                self.table.populated -= 1;
-                return Some(self.table.overflow.swap_remove(self.occupied_offset));
-            } else {
-                self.occupied_offset += 1;
             }
         }
 
@@ -2885,36 +2688,6 @@ mod tests {
         for k in 0..100000u64 {
             let hash = hash_key(&state, k);
 
-            assert_eq!(
-                table.find(hash, |v| v.key == k),
-                Some(&Item {
-                    key: k,
-                    value: k as i32
-                }),
-                "{:#?}",
-                table
-            );
-        }
-    }
-
-    #[test]
-    fn explicit_collision() {
-        let mut table: HashTable<Item> = HashTable::with_capacity(0);
-        let hash = 0;
-        for k in 0..65u64 {
-            match table.entry(hash, |v| v.key == k, |_| 0) {
-                Entry::Vacant(v) => {
-                    v.insert(Item {
-                        key: k,
-                        value: k as i32,
-                    });
-                }
-                _ => unreachable!(),
-            }
-        }
-
-        assert_eq!(table.len(), 65);
-        for k in 0..65u64 {
             assert_eq!(
                 table.find(hash, |v| v.key == k),
                 Some(&Item {
@@ -3201,51 +2974,6 @@ mod tests {
     }
 
     #[test]
-    fn test_clone_with_overflow() {
-        let mut table: HashTable<Item> = HashTable::with_capacity(16);
-
-        let hash = 0u64;
-
-        let num_items = 200u64;
-        for k in 0..num_items {
-            match table.entry(hash, |v| v.key == k, |_| 0) {
-                Entry::Vacant(v) => {
-                    v.insert(Item {
-                        key: k,
-                        value: k as i32,
-                    });
-                }
-                _ => unreachable!(),
-            }
-        }
-
-        let cloned = table.clone();
-
-        assert_eq!(table.len(), cloned.len());
-        assert_eq!(table.len(), num_items as usize);
-
-        for k in 0..num_items {
-            let original_item = table.find(hash, |v| v.key == k).unwrap();
-            let cloned_item = cloned.find(hash, |v| v.key == k).unwrap();
-
-            assert_eq!(original_item.key, k);
-            assert_eq!(cloned_item.key, k);
-            assert_eq!(original_item.value, k as i32);
-            assert_eq!(cloned_item.value, k as i32);
-        }
-
-        if let Some(item) = table.find_mut(hash, |v| v.key == 0) {
-            item.value = -999;
-        }
-
-        let original_item_0 = table.find(hash, |v| v.key == 0).unwrap();
-        let cloned_item_0 = cloned.find(hash, |v| v.key == 0).unwrap();
-
-        assert_eq!(original_item_0.value, -999);
-        assert_eq!(cloned_item_0.value, 0);
-    }
-
-    #[test]
     fn test_shrink_to_fit_empty_table() {
         let mut table: HashTable<Item> = HashTable::with_capacity(100);
         let initial_capacity = table.capacity();
@@ -3361,48 +3089,6 @@ mod tests {
     }
 
     #[test]
-    fn test_shrink_to_fit_with_overflow() {
-        let state = HashState::default();
-        let mut table: HashTable<Item> = HashTable::with_capacity(100);
-
-        let mut items_with_same_hash = Vec::new();
-        let base_hash = hash_key(&state, 42);
-
-        for i in 0..50 {
-            items_with_same_hash.push(Item {
-                key: 1000 + i,
-                value: i as i32,
-            });
-        }
-
-        for item in &items_with_same_hash {
-            table
-                .entry(base_hash, |v| v.key == item.key, |_| base_hash)
-                .or_insert(item.clone());
-        }
-
-        assert_eq!(table.len(), 50);
-        let initial_capacity = table.capacity();
-
-        for i in 0..40 {
-            table.remove(base_hash, |v| v.key == 1000 + i);
-        }
-
-        assert_eq!(table.len(), 10);
-
-        table.shrink_to_fit(|_| base_hash);
-
-        assert_eq!(table.len(), 10);
-        assert!(table.capacity() <= initial_capacity);
-
-        for i in 40..50 {
-            let found = table.find(base_hash, |v| v.key == 1000 + i);
-            assert!(found.is_some());
-            assert_eq!(found.unwrap().value, i as i32);
-        }
-    }
-
-    #[test]
     fn test_shrink_to_fit_no_change_when_optimal() {
         let state = HashState::default();
         let mut table: HashTable<Item> = HashTable::with_capacity(0);
@@ -3468,61 +3154,6 @@ mod tests {
         let removed = table.remove(new_hash, |v| v.key == 999);
         assert!(removed.is_some());
         assert_eq!(table.len(), 100);
-    }
-
-    #[test]
-    fn miri_drain_with_overflow_must_not_lose_elements() {
-        let mut table = HashTable::<Box<u32>>::with_capacity(16);
-
-        let total_items: u32 = 260;
-        for i in 0..total_items {
-            let value = Box::new(i);
-
-            table.entry(0, |v| **v == i, |_| 0).or_insert(value);
-        }
-
-        assert_eq!(table.len(), total_items as usize);
-
-        assert!(!table.overflow.is_empty(), "Expected items in overflow");
-
-        let mut drained_items = table.drain().map(|v| *v).collect::<Vec<_>>();
-        drained_items.sort();
-
-        let expected_items = (0..total_items).collect::<Vec<_>>();
-
-        assert_eq!(
-            drained_items.len(),
-            total_items as usize,
-            "Drain should return all items"
-        );
-        assert_eq!(
-            drained_items, expected_items,
-            "Drained items should match inserted items"
-        );
-
-        assert!(table.is_empty(), "Table should be empty after drain");
-        assert_eq!(table.len(), 0, "Table length should be 0 after drain");
-    }
-
-    #[test]
-    fn miri_iter_over_table_with_overflow() {
-        let mut table = HashTable::<Box<u32>>::with_capacity(16);
-
-        let total_items: u32 = 260;
-        for i in 0..total_items {
-            let value = Box::new(i);
-            table.entry(0, |v| **v == i, |_| 0).or_insert(value);
-        }
-
-        assert_eq!(table.len(), total_items as usize);
-        assert!(!table.overflow.is_empty(), "Expected items in overflow");
-
-        let mut items = table.iter().map(|v| **v).collect::<Vec<_>>();
-        items.sort();
-
-        let expected_items = (0..total_items).collect::<Vec<_>>();
-
-        assert_eq!(items, expected_items, "Iter should visit all items");
     }
 
     #[test]
