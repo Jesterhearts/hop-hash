@@ -39,7 +39,7 @@ mixed workloads. Consider using `hop-hash` when:
 - **Read-heavy workloads:** For workloads dominated by lookups with few modifications, `hashbrown`'s
   optimizations provide better performance.
 
-- **Pathological hash functions:** While `hop-hash` is more resilient to poor hash functions than
+- **Pathological hash functions:** While `hop-hash` is more resilient to poor item distribution than
   many designs, bad hash functions can still degrade performance. In the case of adversarial inputs,
   it is possible to force the table into a resize loop that results in an OOM crash. A good hash
   function will protect against this, just like it will protect any hash table from DOS attacks.
