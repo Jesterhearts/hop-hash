@@ -1520,7 +1520,7 @@ fn bench_mixed_probabilistic_zipf<TestItem: KeyValuePair, const MAX_SIZE: usize>
     }
 }
 
-fn bench_churn<TestItem: KeyValuePair, const MAX_SIZE: usize>(c: &mut Criterion) {
+fn bench_churn_zipf<TestItem: KeyValuePair, const MAX_SIZE: usize>(c: &mut Criterion) {
     let mut group = c.benchmark_group(format!("churn_{}", core::any::type_name::<TestItem>()));
     group.plot_config(PlotConfiguration::default().summary_scale(AxisScale::Logarithmic));
 
@@ -1528,62 +1528,100 @@ fn bench_churn<TestItem: KeyValuePair, const MAX_SIZE: usize>(c: &mut Criterion)
         let hop_capacity = HopHashTable::<TestItem>::with_capacity(*size).capacity();
         let hashbrown_capacity = HashbrownHashTable::<TestItem>::with_capacity(*size).capacity();
 
-        let insertions_and_removals = (0..hop_capacity.max(hashbrown_capacity))
-            .flat_map(|i| {
+        let all_items = (0..hop_capacity.max(hashbrown_capacity))
+            .map(|i| {
                 let key = i as u64;
                 let item = TestItem::new(key);
                 let hash = item.hash_key();
-                [(hash, item.clone()), (hash, item)]
+                (hash, item)
             })
             .collect::<Vec<(u64, TestItem)>>();
 
-        group.throughput(Throughput::Elements(hop_capacity as u64 * 2));
+        let zipf = Zipf::new((hop_capacity as f32 - 1.0).floor(), 1.3).unwrap();
+        let mut rng = SmallRng::from_os_rng();
+
+        group.throughput(Throughput::Elements(hop_capacity as u64));
         group.bench_function(BenchmarkId::new("hop_hash", size), |b| {
             b.iter_batched(
                 || {
-                    let mut hash_and_item = insertions_and_removals.clone();
-                    hash_and_item.shuffle(&mut SmallRng::from_os_rng());
-                    hash_and_item
-                },
-                |hash_and_item| {
                     let mut table = HopHashTable::<TestItem>::with_capacity(0);
-                    for (hash, item) in hash_and_item.into_iter().take(hop_capacity) {
+                    for (hash, item) in all_items.iter().take(hop_capacity).cloned() {
                         match table.entry(hash, |v| v.eq_key(&item), |v| v.hash_key()) {
                             hop_hash::hash_table::Entry::Vacant(entry) => {
                                 entry.insert(item);
                             }
-                            hop_hash::hash_table::Entry::Occupied(entry) => {
-                                black_box(entry.remove());
+                            hop_hash::hash_table::Entry::Occupied(_) => unreachable!(),
+                        }
+                    }
+
+                    table
+                },
+                |mut table| {
+                    for _ in 0..hop_capacity {
+                        let remove = rng.random::<bool>();
+                        let idx = rng.sample(zipf) as usize;
+                        let (hash, item) = &all_items[idx];
+
+                        if remove {
+                            black_box(table.remove(*hash, |v| v.eq_key(item)));
+                        } else {
+                            match table.entry(*hash, |v| v.eq_key(item), |v| v.hash_key()) {
+                                hop_hash::hash_table::Entry::Vacant(entry) => {
+                                    black_box(entry.insert(item.clone()));
+                                }
+                                hop_hash::hash_table::Entry::Occupied(mut occupied) => {
+                                    *occupied.get_mut() = item.clone();
+                                }
                             }
                         }
                     }
-                    black_box(table)
                 },
                 criterion::BatchSize::SmallInput,
             )
         });
 
-        group.throughput(Throughput::Elements(hashbrown_capacity as u64 * 2));
+        let zipf = Zipf::new((hashbrown_capacity as f32 - 1.0).floor(), 1.3).unwrap();
+        let mut rng = SmallRng::from_os_rng();
+
+        group.throughput(Throughput::Elements(hashbrown_capacity as u64));
         group.bench_function(BenchmarkId::new("hashbrown", size), |b| {
             b.iter_batched(
                 || {
-                    let mut hash_and_item = insertions_and_removals.clone();
-                    hash_and_item.shuffle(&mut SmallRng::from_os_rng());
-                    hash_and_item
-                },
-                |hash_and_item| {
                     let mut table = HashbrownHashTable::<TestItem>::with_capacity(0);
-                    for (hash, item) in hash_and_item.into_iter().take(hashbrown_capacity) {
+                    for (hash, item) in all_items.iter().take(hashbrown_capacity).cloned() {
                         match table.entry(hash, |v| v.eq_key(&item), |v| v.hash_key()) {
                             HashbrownEntry::Vacant(entry) => {
-                                black_box(entry.insert(item));
+                                entry.insert(item);
                             }
-                            HashbrownEntry::Occupied(entry) => {
-                                black_box(entry.remove().0);
+                            HashbrownEntry::Occupied(_) => unreachable!(),
+                        }
+                    }
+
+                    table
+                },
+                |mut table| {
+                    for _ in 0..hashbrown_capacity {
+                        let remove = rng.random::<bool>();
+                        let idx = rng.sample(zipf) as usize;
+                        let (hash, item) = &all_items[idx];
+
+                        if remove {
+                            let result = match table.find_entry(*hash, |v| v.eq_key(item)) {
+                                Ok(entry) => Some(entry.remove().0),
+                                Err(_) => None,
+                            };
+                            black_box(result);
+                        } else {
+                            match table.entry(*hash, |v| v.eq_key(item), |v| v.hash_key()) {
+                                HashbrownEntry::Vacant(entry) => {
+                                    black_box(entry.insert(item.clone()));
+                                }
+                                HashbrownEntry::Occupied(mut occupied) => {
+                                    *occupied.get_mut() = item.clone();
+                                }
                             }
                         }
                     }
-                    black_box(table)
                 },
                 criterion::BatchSize::SmallInput,
             )
@@ -1602,9 +1640,9 @@ criterion_group!(
     bench_mixed_probabilistic_zipf::<SmallTestItem, 8>,
     bench_mixed_probabilistic_zipf::<TestItem, 8>,
     bench_mixed_probabilistic_zipf::<LargeTestItem, 5>,
-    bench_churn::<SmallTestItem, 8>,
-    bench_churn::<TestItem, 8>,
-    bench_churn::<LargeTestItem, 5>,
+    bench_churn_zipf::<SmallTestItem, 8>,
+    bench_churn_zipf::<TestItem, 8>,
+    bench_churn_zipf::<LargeTestItem, 5>,
     bench_collect_find::<SmallTestItem, 8>,
     bench_collect_find::<TestItem, 8>,
     bench_collect_find::<LargeTestItem, 5>,

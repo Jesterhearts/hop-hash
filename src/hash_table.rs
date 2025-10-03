@@ -2268,6 +2268,17 @@ impl<'a, V> Iterator for Iter<'a, V> {
         unsafe {
             let total_slots = (self.table.max_root_mask.wrapping_add(1) + HOP_RANGE) * LANES;
             while self.bucket_index < total_slots {
+                let prefetch_index = self.bucket_index + 1;
+                if prefetch_index < total_slots {
+                    prefetch(
+                        self.table
+                            .buckets_ptr()
+                            .as_ref()
+                            .as_ptr()
+                            .add(prefetch_index),
+                    );
+                }
+
                 if self.table.is_occupied(self.bucket_index) {
                     let bucket = &self
                         .table

@@ -69,22 +69,25 @@ and s=1.3.
 
 #### Churn
 This benchmark simulates a workload where the table is kept at a steady state, with random inserts
-and removals. A batch of items equal to 2x the target capacity is allocated, then iterated over in
-random order. If an item is not in the table already, it is inserted. If it is already in the table,
-it is removed. 
+and removals. A batch of items is generated and a table filled to its target capacity and load
+factor. Then, in each iteration, the benchmark randomly selects items from the batch using a zipf
+distribution with s=1.3 in a loop of size equal to the table capacity. For each selected item, it
+has a 50/50 chance of either inserting/updating the item (if it is not already present) or removing
+the item (if it is present). This simulates a workload where the table is constantly being updated
+with new items while also removing old items, maintaining a steady state size.
 
 ![churn workload benchmark results](images/churn.png)
 
 ### Single Operation Workloads
 #### Iteration
 The following benchmark results show the performance of hop-hash vs hashbrown for iterating over
-all items in the table.
+all items in the table with a cold cache.
 
 ![iteration benchmark results](images/iteration.png)
 
 #### Drain
 The following benchmark results show the performance of hop-hash vs hashbrown for draining all
-items from the table.
+items from the table with a cold cache.
 
 ![drain benchmark results](images/drain.png)
 
@@ -97,29 +100,29 @@ runs.
 
 ### Benchmark: `churn` | Item Type: `LargeTestItem`
 
-| Size  | hashbrown | hop_hash  | Comparison                        |
-| ----- | --------- | --------- | --------------------------------- |
-| 1024  | 63 ns/op  | 71 ns/op  | **hashbrown** is **1.12x** faster |
-| 2048  | 90 ns/op  | 79 ns/op  | **hop_hash** is **1.14x** faster  |
-| 4096  | 135 ns/op | 85 ns/op  | **hop_hash** is **1.59x** faster  |
-| 8192  | 138 ns/op | 97 ns/op  | **hop_hash** is **1.41x** faster  |
-| 16384 | 197 ns/op | 135 ns/op | **hop_hash** is **1.46x** faster  |
-| 32768 | 223 ns/op | 156 ns/op | **hop_hash** is **1.43x** faster  |
+| Size  | hashbrown | hop_hash  | Comparison                       |
+| ----- | --------- | --------- | -------------------------------- |
+| 1024  | 239 ns/op | 142 ns/op | **hop_hash** is **1.69x** faster |
+| 2048  | 274 ns/op | 153 ns/op | **hop_hash** is **1.80x** faster |
+| 4096  | 292 ns/op | 158 ns/op | **hop_hash** is **1.84x** faster |
+| 8192  | 323 ns/op | 176 ns/op | **hop_hash** is **1.83x** faster |
+| 16384 | 388 ns/op | 192 ns/op | **hop_hash** is **2.03x** faster |
+| 32768 | 439 ns/op | 233 ns/op | **hop_hash** is **1.89x** faster |
 
 
 ### Benchmark: `churn` | Item Type: `TestItem`
 
 | Size   | hashbrown | hop_hash  | Comparison                        |
 | ------ | --------- | --------- | --------------------------------- |
-| 1024   | 19 ns/op  | 21 ns/op  | **hashbrown** is **1.08x** faster |
-| 2048   | 19 ns/op  | 21 ns/op  | **hashbrown** is **1.08x** faster |
-| 4096   | 21 ns/op  | 22 ns/op  | **hashbrown** is **1.06x** faster |
-| 8192   | 23 ns/op  | 24 ns/op  | **hashbrown** is **1.04x** faster |
-| 16384  | 29 ns/op  | 27 ns/op  | **hop_hash** is **1.09x** faster  |
-| 32768  | 39 ns/op  | 38 ns/op  | **hop_hash** is **1.01x** faster  |
-| 65536  | 75 ns/op  | 66 ns/op  | **hop_hash** is **1.15x** faster  |
-| 131072 | 107 ns/op | 90 ns/op  | **hop_hash** is **1.19x** faster  |
-| 262144 | 137 ns/op | 120 ns/op | **hop_hash** is **1.15x** faster  |
+| 1024   | 73 ns/op  | 75 ns/op  | **hashbrown** is **1.02x** faster |
+| 2048   | 73 ns/op  | 75 ns/op  | **hashbrown** is **1.02x** faster |
+| 4096   | 75 ns/op  | 76 ns/op  | **hashbrown** is **1.01x** faster |
+| 8192   | 98 ns/op  | 82 ns/op  | **hop_hash** is **1.19x** faster  |
+| 16384  | 101 ns/op | 85 ns/op  | **hop_hash** is **1.19x** faster  |
+| 32768  | 116 ns/op | 97 ns/op  | **hop_hash** is **1.20x** faster  |
+| 65536  | 143 ns/op | 66 ns/op  | **hop_hash** is **2.18x** faster  |
+| 131072 | 210 ns/op | 143 ns/op | **hop_hash** is **1.47x** faster  |
+| 262144 | 257 ns/op | 190 ns/op | **hop_hash** is **1.35x** faster  |
 
 
 ### Benchmark: `collect_find` | Item Type: `LargeTestItem`
@@ -178,56 +181,56 @@ runs.
 
 ### Benchmark: `drain` | Item Type: `LargeTestItem`
 
-| Size  | hashbrown | hop_hash | Comparison                        |
-| ----- | --------- | -------- | --------------------------------- |
-| 1024  | 21 ns/op  | 25 ns/op | **hashbrown** is **1.19x** faster |
-| 2048  | 30 ns/op  | 35 ns/op | **hashbrown** is **1.16x** faster |
-| 4096  | 25 ns/op  | 30 ns/op | **hashbrown** is **1.20x** faster |
-| 8192  | 25 ns/op  | 43 ns/op | **hashbrown** is **1.69x** faster |
-| 16384 | 49 ns/op  | 43 ns/op | **hop_hash** is **1.15x** faster  |
-| 32768 | 86 ns/op  | 61 ns/op | **hop_hash** is **1.41x** faster  |
+| Size  | hashbrown | hop_hash | Comparison                       |
+| ----- | --------- | -------- | -------------------------------- |
+| 1024  | 22 ns/op  | 17 ns/op | **hop_hash** is **1.33x** faster |
+| 2048  | 33 ns/op  | 20 ns/op | **hop_hash** is **1.60x** faster |
+| 4096  | 25 ns/op  | 17 ns/op | **hop_hash** is **1.49x** faster |
+| 8192  | 24 ns/op  | 20 ns/op | **hop_hash** is **1.23x** faster |
+| 16384 | 39 ns/op  | 33 ns/op | **hop_hash** is **1.20x** faster |
+| 32768 | 82 ns/op  | 55 ns/op | **hop_hash** is **1.48x** faster |
 
 
 ### Benchmark: `drain` | Item Type: `TestItem`
 
-| Size   | hashbrown | hop_hash | Comparison                       |
-| ------ | --------- | -------- | -------------------------------- |
-| 1024   | 13 ns/op  | 11 ns/op | **hop_hash** is **1.24x** faster |
-| 2048   | 13 ns/op  | 11 ns/op | **hop_hash** is **1.22x** faster |
-| 4096   | 14 ns/op  | 11 ns/op | **hop_hash** is **1.25x** faster |
-| 8192   | 15 ns/op  | 12 ns/op | **hop_hash** is **1.26x** faster |
-| 16384  | 17 ns/op  | 12 ns/op | **hop_hash** is **1.41x** faster |
-| 32768  | 18 ns/op  | 13 ns/op | **hop_hash** is **1.38x** faster |
-| 65536  | 22 ns/op  | 15 ns/op | **hop_hash** is **1.46x** faster |
-| 131072 | 42 ns/op  | 32 ns/op | **hop_hash** is **1.30x** faster |
-| 262144 | 77 ns/op  | 67 ns/op | **hop_hash** is **1.14x** faster |
+| Size   | hashbrown | hop_hash    | Comparison                       |
+| ------ | --------- | ----------- | -------------------------------- |
+| 1024   | 13 ns/op  | 10.63 ns/op | **hop_hash** is **1.25x** faster |
+| 2048   | 13 ns/op  | 10.93 ns/op | **hop_hash** is **1.21x** faster |
+| 4096   | 13 ns/op  | 11.02 ns/op | **hop_hash** is **1.22x** faster |
+| 8192   | 15 ns/op  | 11.36 ns/op | **hop_hash** is **1.31x** faster |
+| 16384  | 17 ns/op  | 12 ns/op    | **hop_hash** is **1.40x** faster |
+| 32768  | 19 ns/op  | 13 ns/op    | **hop_hash** is **1.45x** faster |
+| 65536  | 21 ns/op  | 15 ns/op    | **hop_hash** is **1.40x** faster |
+| 131072 | 39 ns/op  | 24 ns/op    | **hop_hash** is **1.61x** faster |
+| 262144 | 83 ns/op  | 76 ns/op    | **hop_hash** is **1.09x** faster |
 
 
-### Benchmark: `iteration` | Item Type: `LargeTestItem`
+### Benchmark: `iteration_cold` | Item Type: `LargeTestItem`
 
-| Size  | hashbrown  | hop_hash   | Comparison                       |
-| ----- | ---------- | ---------- | -------------------------------- |
-| 1024  | 1.36 ns/op | 0.42 ns/op | **hop_hash** is **3.27x** faster |
-| 2048  | 1.36 ns/op | 0.44 ns/op | **hop_hash** is **3.08x** faster |
-| 4096  | 1.36 ns/op | 0.46 ns/op | **hop_hash** is **2.98x** faster |
-| 8192  | 1.36 ns/op | 0.48 ns/op | **hop_hash** is **2.83x** faster |
-| 16384 | 1.37 ns/op | 0.51 ns/op | **hop_hash** is **2.67x** faster |
-| 32768 | 1.37 ns/op | 0.55 ns/op | **hop_hash** is **2.49x** faster |
+| Size  | hashbrown | hop_hash | Comparison                        |
+| ----- | --------- | -------- | --------------------------------- |
+| 1024  | 13 ns/op  | 13 ns/op | **hashbrown** is **1.03x** faster |
+| 2048  | 28 ns/op  | 20 ns/op | **hop_hash** is **1.41x** faster  |
+| 4096  | 29 ns/op  | 18 ns/op | **hop_hash** is **1.58x** faster  |
+| 8192  | 26 ns/op  | 19 ns/op | **hop_hash** is **1.42x** faster  |
+| 16384 | 38 ns/op  | 22 ns/op | **hop_hash** is **1.69x** faster  |
+| 32768 | 62 ns/op  | 51 ns/op | **hop_hash** is **1.21x** faster  |
 
 
-### Benchmark: `iteration` | Item Type: `TestItem`
+### Benchmark: `iteration_cold` | Item Type: `TestItem`
 
-| Size   | hashbrown  | hop_hash   | Comparison                        |
-| ------ | ---------- | ---------- | --------------------------------- |
-| 1024   | 0.42 ns/op | 0.40 ns/op | **hop_hash** is **1.05x** faster  |
-| 2048   | 0.43 ns/op | 0.40 ns/op | **hop_hash** is **1.08x** faster  |
-| 4096   | 0.43 ns/op | 0.44 ns/op | **hashbrown** is **1.02x** faster |
-| 8192   | 0.44 ns/op | 0.45 ns/op | **hashbrown** is **1.02x** faster |
-| 16384  | 0.45 ns/op | 0.48 ns/op | **hashbrown** is **1.07x** faster |
-| 32768  | 0.48 ns/op | 0.50 ns/op | **hashbrown** is **1.05x** faster |
-| 65536  | 0.54 ns/op | 0.53 ns/op | **hop_hash** is **1.01x** faster  |
-| 131072 | 0.60 ns/op | 0.55 ns/op | **hop_hash** is **1.08x** faster  |
-| 262144 | 0.65 ns/op | 0.56 ns/op | **hop_hash** is **1.14x** faster  |
+| Size   | hashbrown   | hop_hash    | Comparison                       |
+| ------ | ----------- | ----------- | -------------------------------- |
+| 1024   | 10.63 ns/op | 9.80 ns/op  | **hop_hash** is **1.09x** faster |
+| 2048   | 10.83 ns/op | 9.92 ns/op  | **hop_hash** is **1.09x** faster |
+| 4096   | 11.08 ns/op | 10.17 ns/op | **hop_hash** is **1.09x** faster |
+| 8192   | 12 ns/op    | 10.64 ns/op | **hop_hash** is **1.15x** faster |
+| 16384  | 15 ns/op    | 12 ns/op    | **hop_hash** is **1.20x** faster |
+| 32768  | 18 ns/op    | 13 ns/op    | **hop_hash** is **1.35x** faster |
+| 65536  | 21 ns/op    | 15 ns/op    | **hop_hash** is **1.42x** faster |
+| 131072 | 38 ns/op    | 29 ns/op    | **hop_hash** is **1.28x** faster |
+| 262144 | 77 ns/op    | 51 ns/op    | **hop_hash** is **1.50x** faster |
 
 
 ### Benchmark: `mixed_probabilistic` | Item Type: `LargeTestItem`
