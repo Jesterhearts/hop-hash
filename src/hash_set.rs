@@ -1,3 +1,4 @@
+use alloc::boxed::Box;
 use core::fmt::Debug;
 use core::hash::BuildHasher;
 use core::hash::Hash;
@@ -33,7 +34,10 @@ where
     T: Hash + Eq,
     S: BuildHasher,
 {
-    fn eq(&self, other: &Self) -> bool {
+    fn eq(
+        &self,
+        other: &Self,
+    ) -> bool {
         if self.len() != other.len() {
             return false;
         }
@@ -53,7 +57,10 @@ where
     T: Debug + Hash + Eq,
     S: BuildHasher,
 {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    fn fmt(
+        &self,
+        f: &mut core::fmt::Formatter<'_>,
+    ) -> core::fmt::Result {
         f.debug_set().entries(self.iter()).finish()
     }
 }
@@ -100,7 +107,10 @@ where
     /// assert!(set.capacity() >= 100);
     /// # }
     /// ```
-    pub fn with_capacity_and_hasher(capacity: usize, hash_builder: S) -> Self {
+    pub fn with_capacity_and_hasher(
+        capacity: usize,
+        hash_builder: S,
+    ) -> Self {
         Self {
             table: HashTable::with_capacity(capacity),
             hash_builder,
@@ -223,7 +233,10 @@ where
     }
 
     /// Reserves capacity for at least `additional` more elements.
-    pub fn reserve(&mut self, additional: usize) {
+    pub fn reserve(
+        &mut self,
+        additional: usize,
+    ) {
         self.table
             .reserve(additional, |k| self.hash_builder.hash_one(k));
     }
@@ -248,7 +261,10 @@ where
     /// assert_eq!(set.len(), 1);
     /// # }
     /// ```
-    pub fn insert(&mut self, value: T) -> bool {
+    pub fn insert(
+        &mut self,
+        value: T,
+    ) -> bool {
         let hash = self.hash_builder.hash_one(&value);
         match self
             .table
@@ -277,7 +293,10 @@ where
     /// assert!(!set.contains(&2));
     /// # }
     /// ```
-    pub fn contains(&self, value: &T) -> bool {
+    pub fn contains(
+        &self,
+        value: &T,
+    ) -> bool {
         let hash = self.hash_builder.hash_one(value);
         self.table.find(hash, |v| v == value).is_some()
     }
@@ -298,7 +317,10 @@ where
     /// assert_eq!(set.remove(&1), false);
     /// # }
     /// ```
-    pub fn remove(&mut self, value: &T) -> bool {
+    pub fn remove(
+        &mut self,
+        value: &T,
+    ) -> bool {
         let hash = self.hash_builder.hash_one(value);
         self.table.remove(hash, |v| v == value).is_some()
     }
@@ -320,7 +342,10 @@ where
     /// assert_eq!(set.len(), 2);
     /// # }
     /// ```
-    pub fn replace(&mut self, value: T) -> Option<T> {
+    pub fn replace(
+        &mut self,
+        value: T,
+    ) -> Option<T> {
         let hash = self.hash_builder.hash_one(&value);
         match self
             .table
@@ -352,7 +377,10 @@ where
     /// assert_eq!(set.take(&1), None);
     /// # }
     /// ```
-    pub fn take(&mut self, value: &T) -> Option<T> {
+    pub fn take(
+        &mut self,
+        value: &T,
+    ) -> Option<T> {
         let hash = self.hash_builder.hash_one(value);
         self.table.remove(hash, |v| v == value)
     }
@@ -373,7 +401,10 @@ where
     /// assert_eq!(set.get(&2), None);
     /// # }
     /// ```
-    pub fn get(&self, value: &T) -> Option<&T> {
+    pub fn get(
+        &self,
+        value: &T,
+    ) -> Option<&T> {
         let hash = self.hash_builder.hash_one(value);
         self.table.find(hash, |v| v == value)
     }
@@ -452,7 +483,10 @@ where
     /// assert!(a.is_disjoint(&b));
     /// # }
     /// ```
-    pub fn is_disjoint(&self, other: &HashSet<T, S>) -> bool {
+    pub fn is_disjoint(
+        &self,
+        other: &HashSet<T, S>,
+    ) -> bool {
         if self.len() <= other.len() {
             self.iter().all(|v| !other.contains(v))
         } else {
@@ -482,7 +516,10 @@ where
     /// assert!(a.is_subset(&b));
     /// # }
     /// ```
-    pub fn is_subset(&self, other: &HashSet<T, S>) -> bool {
+    pub fn is_subset(
+        &self,
+        other: &HashSet<T, S>,
+    ) -> bool {
         if self.len() > other.len() {
             return false;
         }
@@ -511,7 +548,10 @@ where
     /// assert!(a.is_superset(&b));
     /// # }
     /// ```
-    pub fn is_superset(&self, other: &HashSet<T, S>) -> bool {
+    pub fn is_superset(
+        &self,
+        other: &HashSet<T, S>,
+    ) -> bool {
         other.is_subset(self)
     }
 
@@ -536,7 +576,10 @@ where
     /// assert_eq!(union.len(), 3);
     /// # }
     /// ```
-    pub fn union<'a>(&'a self, other: &'a HashSet<T, S>) -> Union<'a, T, S> {
+    pub fn union<'a>(
+        &'a self,
+        other: &'a HashSet<T, S>,
+    ) -> Union<'a, T, S> {
         Union {
             iter: self.iter(),
             other_iter: other.iter(),
@@ -565,7 +608,10 @@ where
     /// assert_eq!(intersection.len(), 1);
     /// # }
     /// ```
-    pub fn intersection<'a>(&'a self, other: &'a HashSet<T, S>) -> Intersection<'a, T, S> {
+    pub fn intersection<'a>(
+        &'a self,
+        other: &'a HashSet<T, S>,
+    ) -> Intersection<'a, T, S> {
         if self.len() <= other.len() {
             Intersection {
                 iter: self.iter(),
@@ -600,7 +646,10 @@ where
     /// assert_eq!(difference.len(), 1);
     /// # }
     /// ```
-    pub fn difference<'a>(&'a self, other: &'a HashSet<T, S>) -> Difference<'a, T, S> {
+    pub fn difference<'a>(
+        &'a self,
+        other: &'a HashSet<T, S>,
+    ) -> Difference<'a, T, S> {
         Difference {
             iter: self.iter(),
             other,
@@ -662,7 +711,10 @@ where
     /// assert!(set.contains(&4));
     /// # }
     /// ```
-    pub fn retain(&mut self, f: impl FnMut(&T) -> bool) {
+    pub fn retain(
+        &mut self,
+        f: impl FnMut(&T) -> bool,
+    ) {
         self.table.retain(f, |k| self.hash_builder.hash_one(k));
     }
 
@@ -693,7 +745,10 @@ where
     /// assert!(set.contains(&3));
     /// # }
     /// ```
-    pub fn extract_if<F>(&mut self, f: F) -> ExtractIf<'_, T, F>
+    pub fn extract_if<F>(
+        &mut self,
+        f: F,
+    ) -> ExtractIf<'_, T, F>
     where
         F: FnMut(&mut T) -> bool,
     {
@@ -848,7 +903,10 @@ where
     T: Hash + Eq,
     S: BuildHasher,
 {
-    fn extend<I: IntoIterator<Item = T>>(&mut self, iter: I) {
+    fn extend<I: IntoIterator<Item = T>>(
+        &mut self,
+        iter: I,
+    ) {
         for value in iter {
             self.insert(value);
         }

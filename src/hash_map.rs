@@ -1,3 +1,4 @@
+use alloc::boxed::Box;
 use core::fmt::Debug;
 use core::hash::BuildHasher;
 use core::hash::Hash;
@@ -36,7 +37,10 @@ where
     V: PartialEq,
     S: BuildHasher,
 {
-    fn eq(&self, other: &Self) -> bool {
+    fn eq(
+        &self,
+        other: &Self,
+    ) -> bool {
         if self.len() != other.len() {
             return false;
         }
@@ -65,7 +69,10 @@ where
     V: Debug,
     S: BuildHasher,
 {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    fn fmt(
+        &self,
+        f: &mut core::fmt::Formatter<'_>,
+    ) -> core::fmt::Result {
         let mut map = f.debug_map();
         for (k, v) in self.iter() {
             map.entry(k, v);
@@ -116,7 +123,10 @@ where
     /// assert!(map.capacity() >= 100);
     /// # }
     /// ```
-    pub fn with_capacity_and_hasher(capacity: usize, hash_builder: S) -> Self {
+    pub fn with_capacity_and_hasher(
+        capacity: usize,
+        hash_builder: S,
+    ) -> Self {
         Self {
             table: HashTable::with_capacity(capacity),
             hash_builder,
@@ -240,7 +250,10 @@ where
     }
 
     /// Reserves capacity for at least `additional` more elements.
-    pub fn reserve(&mut self, additional: usize) {
+    pub fn reserve(
+        &mut self,
+        additional: usize,
+    ) {
         self.table
             .reserve(additional, |k| self.hash_builder.hash_one(&k.0));
     }
@@ -269,7 +282,10 @@ where
     /// assert_eq!(map.get(&2), Some(&20));
     /// # }
     /// ```
-    pub fn retain(&mut self, mut f: impl FnMut(&K, &V) -> bool) {
+    pub fn retain(
+        &mut self,
+        mut f: impl FnMut(&K, &V) -> bool,
+    ) {
         self.table
             .retain(|(k, v)| f(k, v), |(k, _)| self.hash_builder.hash_one(k));
     }
@@ -305,7 +321,10 @@ where
     /// assert_eq!(map.get(&2), Some(&40));
     /// # }
     /// ```
-    pub fn retain_mut(&mut self, mut f: impl FnMut(&K, &mut V) -> bool) {
+    pub fn retain_mut(
+        &mut self,
+        mut f: impl FnMut(&K, &mut V) -> bool,
+    ) {
         self.table
             .retain_mut(|(k, v)| f(k, v), |(k, _)| self.hash_builder.hash_one(k));
     }
@@ -368,7 +387,11 @@ where
     /// assert_eq!(map.get(&37), Some(&"b"));
     /// # }
     /// ```
-    pub fn insert(&mut self, key: K, value: V) -> Option<V> {
+    pub fn insert(
+        &mut self,
+        key: K,
+        value: V,
+    ) -> Option<V> {
         let hash = self.hash_builder.hash_one(&key);
         match self.table.entry(
             hash,
@@ -401,7 +424,10 @@ where
     /// assert_eq!(map.get(&2), None);
     /// # }
     /// ```
-    pub fn get(&self, key: &K) -> Option<&V> {
+    pub fn get(
+        &self,
+        key: &K,
+    ) -> Option<&V> {
         let hash = self.hash_builder.hash_one(key);
         self.table.find(hash, |(k, _)| k == key).map(|(_, v)| v)
     }
@@ -421,7 +447,10 @@ where
     /// assert_eq!(map.get_key_value(&2), None);
     /// # }
     /// ```
-    pub fn get_key_value(&self, key: &K) -> Option<(&K, &V)> {
+    pub fn get_key_value(
+        &self,
+        key: &K,
+    ) -> Option<(&K, &V)> {
         let hash = self.hash_builder.hash_one(key);
         self.table
             .find(hash, |(k, _)| k == key)
@@ -445,7 +474,10 @@ where
     /// assert_eq!(map.get(&1), Some(&"b"));
     /// # }
     /// ```
-    pub fn get_mut(&mut self, key: &K) -> Option<&mut V> {
+    pub fn get_mut(
+        &mut self,
+        key: &K,
+    ) -> Option<&mut V> {
         let hash = self.hash_builder.hash_one(key);
         self.table.find_mut(hash, |(k, _)| k == key).map(|(_, v)| v)
     }
@@ -465,7 +497,10 @@ where
     /// assert!(!map.contains_key(&2));
     /// # }
     /// ```
-    pub fn contains_key(&self, key: &K) -> bool {
+    pub fn contains_key(
+        &self,
+        key: &K,
+    ) -> bool {
         self.get(key).is_some()
     }
 
@@ -485,7 +520,10 @@ where
     /// assert_eq!(map.remove(&1), None);
     /// # }
     /// ```
-    pub fn remove(&mut self, key: &K) -> Option<V> {
+    pub fn remove(
+        &mut self,
+        key: &K,
+    ) -> Option<V> {
         let hash = self.hash_builder.hash_one(key);
         self.table.remove(hash, |(k, _)| k == key).map(|(_, v)| v)
     }
@@ -506,7 +544,10 @@ where
     /// assert_eq!(map.remove_entry(&1), None);
     /// # }
     /// ```
-    pub fn remove_entry(&mut self, key: &K) -> Option<(K, V)> {
+    pub fn remove_entry(
+        &mut self,
+        key: &K,
+    ) -> Option<(K, V)> {
         let hash = self.hash_builder.hash_one(key);
         self.table.remove(hash, |(k, _)| k == key)
     }
@@ -530,7 +571,10 @@ where
     /// assert_eq!(map.get(&2), Some(&"b"));
     /// # }
     /// ```
-    pub fn entry(&mut self, key: K) -> Entry<'_, K, V> {
+    pub fn entry(
+        &mut self,
+        key: K,
+    ) -> Entry<'_, K, V> {
         let hash = self.hash_builder.hash_one(&key);
         match self.table.entry(
             hash,
@@ -766,7 +810,10 @@ pub enum Entry<'a, K, V> {
 impl<'a, K, V> Entry<'a, K, V> {
     /// Inserts a default value if the entry is vacant and returns a mutable
     /// reference.
-    pub fn or_insert(self, default: V) -> &'a mut V {
+    pub fn or_insert(
+        self,
+        default: V,
+    ) -> &'a mut V {
         match self {
             Entry::Occupied(entry) => entry.into_mut(),
             Entry::Vacant(entry) => entry.insert(default),
@@ -775,7 +822,10 @@ impl<'a, K, V> Entry<'a, K, V> {
 
     /// Inserts a value computed from a closure if the entry is vacant and
     /// returns a mutable reference.
-    pub fn or_insert_with<F>(self, default: F) -> &'a mut V
+    pub fn or_insert_with<F>(
+        self,
+        default: F,
+    ) -> &'a mut V
     where
         F: FnOnce() -> V,
     {
@@ -787,7 +837,10 @@ impl<'a, K, V> Entry<'a, K, V> {
 
     /// Provides in-place mutable access to an occupied entry before any
     /// potential inserts.
-    pub fn and_modify<F>(self, f: F) -> Self
+    pub fn and_modify<F>(
+        self,
+        f: F,
+    ) -> Self
     where
         F: FnOnce(&mut V),
     {
@@ -838,7 +891,10 @@ impl<'a, K, V> VacantEntry<'a, K, V> {
     }
 
     /// Inserts the value into the map and returns a mutable reference to it.
-    pub fn insert(self, value: V) -> &'a mut V {
+    pub fn insert(
+        self,
+        value: V,
+    ) -> &'a mut V {
         &mut self.entry.insert((self.key, value)).1
     }
 }
@@ -870,7 +926,10 @@ impl<'a, K, V> OccupiedEntry<'a, K, V> {
     }
 
     /// Inserts a value into the entry and returns the old value.
-    pub fn insert(&mut self, value: V) -> V {
+    pub fn insert(
+        &mut self,
+        value: V,
+    ) -> V {
         core::mem::replace(&mut self.entry.get_mut().1, value)
     }
 
@@ -1042,7 +1101,10 @@ where
     K: Hash + Eq,
     S: BuildHasher,
 {
-    fn extend<T: IntoIterator<Item = (K, V)>>(&mut self, iter: T) {
+    fn extend<T: IntoIterator<Item = (K, V)>>(
+        &mut self,
+        iter: T,
+    ) {
         for (k, v) in iter {
             self.insert(k, v);
         }

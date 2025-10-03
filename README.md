@@ -82,9 +82,7 @@ The choice of load factor significantly impacts the performance/memory tradeoff:
 
 - **92% (`density-ninety-two`)**: Provides a balance between performance and memory efficiency for
   larger tables. Note that for small tables this can harm performance by as much as 10-30% in
-  benchmarks, with the exception of iteration and drain, where the performance **improves** across
-  all table sizes for higher densities, especially for large value types. For larger tables, the
-  performance impact is relatively muted.
+  benchmarks. For larger tables, the performance impact is relatively muted.
 
 - **97% (`density-ninety-seven`)**: Maximizes memory efficiency at the cost of approximately 3-5%
   performance over `density-ninety-two`. Avoid combining with `eight-way` due to significantly
@@ -147,10 +145,9 @@ configurations.
 
 The benchmarks use randomized data, which I feel better represents real-world usage than sequential
 data. With this randomized data, the two crates benchmark very closely, with `hop-hash`
-outperforming `hashbrown` in some scenarios and vice versa. However, if you are doing only lookups
-on a pre-populated table, `hashbrown` will outperform `hop-hash`, especially if you can pre-allocate
-the table to the correct size. The same is true if you have small or medium-small tables (<16k
-elements).
+outperforming `hashbrown` in some scenarios and vice versa. However, if you are doing only lookups,
+`hashbrown` will outperform `hop-hash`, especially if you can pre-allocate the table to the correct
+size. The same is true if you have small or medium-small tables (<16k elements).
 
 ## License
 

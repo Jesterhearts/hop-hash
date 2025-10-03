@@ -18,8 +18,7 @@ In all cases, Hashbrown is represented with the red line, and Hop-hash is repres
 - Hashbrown version 0.16.0
 - Value-type (32 bytes) is a String of length 20, generated arbitrarily, plus a u64. The String is
   used as the key for hashing and comparisons.
-  - Data is pre-generated for a benchmark and then used for all iterations of that benchmark. The
-    initial data is pre-hashed before any insertion/find/etc. to try to exclude hashing time from
+  - Input data is pre-hashed before any insertion/find/etc. to try to exclude hashing time from
     the benchmarks as much as possible (some rehashing still occurs during table growth, but this
     seems like a fair thing to benchmark).
   - The benchmark suite does include large (280 bytes)/small (8 byte) value types, but those charts

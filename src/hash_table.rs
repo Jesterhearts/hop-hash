@@ -174,7 +174,11 @@ fn target_load_factor_inverse(capacity: usize) -> usize {
 /// the behavior is undefined if the address is not valid for reads.
 #[inline(always)]
 unsafe fn prefetch<T>(ptr: *const T) {
-    if (cfg!(target_arch = "x86") || cfg!(target_arch = "x86_64")) && cfg!(target_feature = "sse") {
+    #[cfg(all(
+        any(target_arch = "x86", target_arch = "x86_64"),
+        target_feature = "sse"
+    ))]
+    {
         unsafe {
             _mm_prefetch(ptr as *const i8, _MM_HINT_T0);
         }
@@ -291,19 +295,22 @@ struct HopInfo {
 impl HopInfo {
     #[inline(always)]
     fn candidates(&self) -> u16 {
-        if (cfg!(target_arch = "x86") || cfg!(target_arch = "x86_64"))
-            && cfg!(target_feature = "sse2")
-        {
-            // SAFETY: We have ensure that we are on x86/x86_64 with SSE2 support
-            unsafe { self.candidates_sse2() }
-        } else {
-            let mut bits: u16 = 0;
-            for i in 0..HOP_RANGE {
-                if self.neighbors[i] > 0 {
-                    bits |= 1 << i;
+        cfg_if! {
+            if #[cfg(all(
+                any(target_arch = "x86_64", target_arch = "x86"),
+                target_feature = "sse2"
+            ))] {
+                // SAFETY: We have ensure that we are on x86/x86_64 with SSE2 support
+                unsafe { self.candidates_sse2() }
+            } else {
+                let mut bits: u16 = 0;
+                for i in 0..HOP_RANGE {
+                    if self.neighbors[i] > 0 {
+                        bits |= 1 << i;
+                    }
                 }
+                bits
             }
-            bits
         }
     }
 
@@ -311,6 +318,10 @@ impl HopInfo {
     ///
     /// # Safety
     /// - Caller must ensure the CPU supports SSE2 instructions.
+    #[cfg(all(
+        any(target_arch = "x86_64", target_arch = "x86"),
+        target_feature = "sse2"
+    ))]
     #[inline(always)]
     unsafe fn candidates_sse2(&self) -> u16 {
         // SAFETY: We have ensured that `HopInfo` is `#[repr(C, align(16))]`,
@@ -330,7 +341,10 @@ impl HopInfo {
     /// The caller must ensure `n_index` is within the bounds of the neighbors
     /// array (less than `HOP_RANGE`).
     #[inline(always)]
-    unsafe fn clear(&mut self, n_index: usize) {
+    unsafe fn clear(
+        &mut self,
+        n_index: usize,
+    ) {
         // SAFETY: Caller ensures `n_index` is within bounds of the neighbors array
         unsafe {
             debug_assert!(self.neighbors[n_index] > 0);
@@ -345,7 +359,10 @@ impl HopInfo {
     /// The caller must ensure `n_index` is within the bounds of the neighbors
     /// array (less than `HOP_RANGE`).
     #[inline(always)]
-    unsafe fn set(&mut self, n_index: usize) {
+    unsafe fn set(
+        &mut self,
+        n_index: usize,
+    ) {
         // SAFETY: Caller ensures `n_index` is within bounds of the neighbors array
         unsafe {
             debug_assert!(self.neighbors[n_index] < LANES as u8);
@@ -575,7 +592,10 @@ pub struct HashTable<V> {
 }
 
 impl<V> Debug for HashTable<V> {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    fn fmt(
+        &self,
+        f: &mut core::fmt::Formatter<'_>,
+    ) -> core::fmt::Result {
         use alloc::format;
         use alloc::string::ToString;
 
@@ -959,7 +979,10 @@ impl<V> HashTable<V> {
     ///
     /// If the table is empty, it will be completely deallocated and reset to
     /// a zero-capacity state.
-    pub fn shrink_to_fit(&mut self, rehash: impl Fn(&V) -> u64) {
+    pub fn shrink_to_fit(
+        &mut self,
+        rehash: impl Fn(&V) -> u64,
+    ) {
         if self.populated == 0 {
             if self.layout.layout.size() != 0 {
                 // SAFETY: We have ensured that the allocation is valid before
@@ -994,7 +1017,11 @@ impl<V> HashTable<V> {
     ///
     /// * `additional` - The number of additional elements the table should be
     ///   able to hold
-    pub fn reserve(&mut self, additional: usize, rehash: impl Fn(&V) -> u64) {
+    pub fn reserve(
+        &mut self,
+        additional: usize,
+        rehash: impl Fn(&V) -> u64,
+    ) {
         let required = self.populated.saturating_add(additional);
         if required > self.max_pop {
             let new_capacity: Capacity =
@@ -1014,7 +1041,11 @@ impl<V> HashTable<V> {
     /// * `hash` - The hash value of the entry to remove
     /// * `eq` - A predicate function that returns `true` for the value to
     ///   remove
-    pub fn remove(&mut self, hash: u64, eq: impl Fn(&V) -> bool) -> Option<V> {
+    pub fn remove(
+        &mut self,
+        hash: u64,
+        eq: impl Fn(&V) -> bool,
+    ) -> Option<V> {
         if self.populated == 0 {
             return None;
         }
@@ -1158,7 +1189,12 @@ impl<V> HashTable<V> {
     /// `base + 16` does not exceed the bounds of the tags array or buckets
     /// array.
     #[inline(always)]
-    unsafe fn search_tags(&self, eq: impl Fn(&V) -> bool, tag: u8, base: usize) -> Option<usize> {
+    unsafe fn search_tags(
+        &self,
+        eq: impl Fn(&V) -> bool,
+        tag: u8,
+        base: usize,
+    ) -> Option<usize> {
         let mut tags = unsafe { self.scan_tags(base, tag) };
         let mut index;
         let mut next_index = tags.trailing_zeros() as usize;
@@ -1204,25 +1240,32 @@ impl<V> HashTable<V> {
     /// The caller must ensure `bucket` is within a valid range, such that
     /// `bucket + 16` does not exceed the bounds of the tags array.
     #[inline(always)]
-    unsafe fn scan_tags(&self, bucket: usize, tag: u8) -> u16 {
-        if (cfg!(target_arch = "x86") || cfg!(target_arch = "x86_64"))
-            && cfg!(target_feature = "sse2")
-        {
-            // SAFETY: We have validated the bucket bounds, as per the requirements of
-            // `scan_tags`.
-            unsafe { self.scan_tags_sse2(bucket, tag) }
-        } else {
-            let meta_ptr = self.tags_ptr();
-            let mut tags: u16 = 0;
-            for i in 0..LANES {
-                // SAFETY: We have ensured `bucket + i` is within bounds, as `bucket` is a valid
-                // base for `scan_tags`.
-                let t = unsafe { *meta_ptr.as_ref().get_unchecked(bucket + i) };
-                if t == tag {
-                    tags |= 1 << i;
+    unsafe fn scan_tags(
+        &self,
+        bucket: usize,
+        tag: u8,
+    ) -> u16 {
+        cfg_if! {
+            if #[cfg(all(
+                any(target_arch = "x86_64", target_arch = "x86"),
+                target_feature = "sse2"
+            ))] {
+                // SAFETY: We have validated the bucket bounds, as per the requirements of
+                // `scan_tags`.
+                unsafe { self.scan_tags_sse2(bucket, tag) }
+            } else {
+                let meta_ptr = self.tags_ptr();
+                let mut tags: u16 = 0;
+                for i in 0..LANES {
+                    // SAFETY: We have ensured `bucket + i` is within bounds, as `bucket` is a valid
+                    // base for `scan_tags`.
+                    let t = unsafe { *meta_ptr.as_ref().get_unchecked(bucket + i) };
+                    if t == tag {
+                        tags |= 1 << i;
+                    }
                 }
+                tags
             }
-            tags
         }
     }
 
@@ -1234,8 +1277,16 @@ impl<V> HashTable<V> {
     /// `bucket + 16` does not exceed the bounds of the tags array. This
     /// relies on `EMPTY` (0x80) using the sign bit for complementary SIMD
     /// scans.
+    #[cfg(all(
+        any(target_arch = "x86_64", target_arch = "x86"),
+        target_feature = "sse2"
+    ))]
     #[inline(always)]
-    unsafe fn scan_tags_sse2(&self, bucket: usize, tag: u8) -> u16 {
+    unsafe fn scan_tags_sse2(
+        &self,
+        bucket: usize,
+        tag: u8,
+    ) -> u16 {
         // SAFETY: We have validated that `bucket` is within bounds, allowing for a safe
         // load of 16 consecutive bytes.
         unsafe {
@@ -1251,12 +1302,19 @@ impl<V> HashTable<V> {
     }
 
     #[inline(always)]
-    fn hopmap_index(&self, hash: u64) -> usize {
+    fn hopmap_index(
+        &self,
+        hash: u64,
+    ) -> usize {
         (hash as usize) & self.max_root_mask
     }
 
     #[inline(always)]
-    fn absolute_index(&self, hop_bucket: usize, n_index: usize) -> usize {
+    fn absolute_index(
+        &self,
+        hop_bucket: usize,
+        n_index: usize,
+    ) -> usize {
         hop_bucket * LANES + n_index
     }
 
@@ -1408,7 +1466,10 @@ impl<V> HashTable<V> {
     ///
     /// The caller must ensure `index` is within the bounds of the tags array.
     #[inline(always)]
-    unsafe fn is_occupied(&self, index: usize) -> bool {
+    unsafe fn is_occupied(
+        &self,
+        index: usize,
+    ) -> bool {
         // SAFETY: Caller ensures `index` is within bounds of the tags array
         unsafe { *self.tags_ptr().as_ref().get_unchecked(index) != EMPTY }
     }
@@ -1419,7 +1480,10 @@ impl<V> HashTable<V> {
     ///
     /// The caller must ensure `index` is within the bounds of the tags array.
     #[inline(always)]
-    unsafe fn clear_occupied(&mut self, index: usize) {
+    unsafe fn clear_occupied(
+        &mut self,
+        index: usize,
+    ) {
         // SAFETY: Caller ensures `index` is within bounds of the tags array
         unsafe {
             *self.tags_ptr().as_mut().get_unchecked_mut(index) = EMPTY;
@@ -1433,7 +1497,11 @@ impl<V> HashTable<V> {
     /// The caller must ensure `index` is within the bounds of the tags array
     /// and that `tag` is a valid tag (not `EMPTY`).
     #[inline(always)]
-    unsafe fn set_occupied(&mut self, index: usize, tag: u8) {
+    unsafe fn set_occupied(
+        &mut self,
+        index: usize,
+        tag: u8,
+    ) {
         // SAFETY: Caller ensures `index` is within bounds of the tags array
         unsafe {
             debug_assert!(tag != EMPTY);
@@ -1447,18 +1515,24 @@ impl<V> HashTable<V> {
     ///
     /// The caller must ensure `start` is within the bounds of the tags array.
     #[inline(always)]
-    unsafe fn find_next_unoccupied(&self, start: usize) -> Option<usize> {
+    unsafe fn find_next_unoccupied(
+        &self,
+        start: usize,
+    ) -> Option<usize> {
         // SAFETY: start is validated to be within table bounds by caller
         unsafe {
-            if (cfg!(target_arch = "x86") || cfg!(target_arch = "x86_64"))
-                && cfg!(target_feature = "sse2")
-            {
-                self.find_next_unoccupied_sse2(start)
-            } else {
-                self.tags_ptr().as_ref()[start..]
-                    .iter()
-                    .position(|&b| b == EMPTY)
-                    .map(|idx| idx + start)
+            cfg_if! {
+                if #[cfg(all(
+                    any(target_arch = "x86_64", target_arch = "x86"),
+                    target_feature = "sse2"
+                ))] {
+                    self.find_next_unoccupied_sse2(start)
+                } else {
+                    self.tags_ptr().as_ref()[start..]
+                        .iter()
+                        .position(|&b| b == EMPTY)
+                        .map(|idx| idx + start)
+                }
             }
         }
     }
@@ -1472,7 +1546,10 @@ impl<V> HashTable<V> {
     /// to find empty slots. Unaligned loads are performed but guarded by
     /// bounds checks.
     #[inline(always)]
-    unsafe fn find_next_unoccupied_sse2(&self, start: usize) -> Option<usize> {
+    unsafe fn find_next_unoccupied_sse2(
+        &self,
+        start: usize,
+    ) -> Option<usize> {
         use core::arch::x86_64::*;
         unsafe {
             let meta_ptr = self.tags_ptr();
@@ -1515,7 +1592,11 @@ impl<V> HashTable<V> {
     /// * `hash` - The hash value to search for
     /// * `eq` - A predicate function that returns `true` for the desired value
     #[inline]
-    pub fn find(&self, hash: u64, eq: impl Fn(&V) -> bool) -> Option<&V> {
+    pub fn find(
+        &self,
+        hash: u64,
+        eq: impl Fn(&V) -> bool,
+    ) -> Option<&V> {
         if self.populated == 0 {
             return None;
         }
@@ -1550,7 +1631,11 @@ impl<V> HashTable<V> {
     /// * `hash` - The hash value to search for
     /// * `eq` - A predicate function that returns `true` for the desired value
     #[inline]
-    pub fn find_mut(&mut self, hash: u64, eq: impl Fn(&V) -> bool) -> Option<&mut V> {
+    pub fn find_mut(
+        &mut self,
+        hash: u64,
+        eq: impl Fn(&V) -> bool,
+    ) -> Option<&mut V> {
         if self.populated == 0 {
             return None;
         }
@@ -1574,7 +1659,10 @@ impl<V> HashTable<V> {
     }
 
     #[inline]
-    fn maybe_resize_rehash(&mut self, rehash: &dyn Fn(&V) -> u64) {
+    fn maybe_resize_rehash(
+        &mut self,
+        rehash: &dyn Fn(&V) -> u64,
+    ) {
         if self.populated >= self.max_pop {
             self.resize_rehash(rehash);
         }
@@ -1582,7 +1670,10 @@ impl<V> HashTable<V> {
 
     #[inline]
     #[cold]
-    fn resize_rehash(&mut self, rehash: &dyn Fn(&V) -> u64) {
+    fn resize_rehash(
+        &mut self,
+        rehash: &dyn Fn(&V) -> u64,
+    ) {
         let capacity = self.max_root_mask.wrapping_add(1).max(HOP_RANGE) + 1;
         let capacity: Capacity = capacity.into();
 
@@ -1590,7 +1681,11 @@ impl<V> HashTable<V> {
     }
 
     #[inline]
-    fn do_resize_rehash(&mut self, capacity: Capacity, rehash: &dyn Fn(&V) -> u64) {
+    fn do_resize_rehash(
+        &mut self,
+        capacity: Capacity,
+        rehash: &dyn Fn(&V) -> u64,
+    ) {
         debug_assert!(
             capacity.max_root_mask() != self.max_root_mask || self.max_root_mask == usize::MAX
         );
@@ -1911,7 +2006,11 @@ impl<V> HashTable<V> {
     /// * `f` - A closure that determines whether to retain each value
     /// * `rehash` - A closure that computes the hash for a value, used to
     ///   update the hopmap when removing entries
-    pub fn retain(&mut self, mut f: impl FnMut(&V) -> bool, rehash: impl Fn(&V) -> u64) {
+    pub fn retain(
+        &mut self,
+        mut f: impl FnMut(&V) -> bool,
+        rehash: impl Fn(&V) -> u64,
+    ) {
         self.retain_mut(|v| f(v), rehash);
     }
 
@@ -1927,7 +2026,11 @@ impl<V> HashTable<V> {
     /// * `rehash` - A closure that computes the hash for a value, used to
     ///   update the hopmap when removing entries
     #[inline]
-    pub fn retain_mut(&mut self, mut f: impl FnMut(&mut V) -> bool, rehash: impl Fn(&V) -> u64) {
+    pub fn retain_mut(
+        &mut self,
+        mut f: impl FnMut(&mut V) -> bool,
+        rehash: impl Fn(&V) -> u64,
+    ) {
         if self.populated == 0 {
             return;
         }
@@ -1980,7 +2083,11 @@ impl<V> HashTable<V> {
     /// * `f` - A closure that determines whether to extract each value
     /// * `rehash` - A closure that computes the hash for a value, used to
     ///   update the hopmap when removing entries
-    pub fn extract_if<F, R>(&mut self, f: F, rehash: R) -> ExtractIf<'_, V, F, R>
+    pub fn extract_if<F, R>(
+        &mut self,
+        f: F,
+        rehash: R,
+    ) -> ExtractIf<'_, V, F, R>
     where
         F: FnMut(&mut V) -> bool,
         R: Fn(&V) -> u64,
@@ -2027,7 +2134,10 @@ impl<'a, V> Entry<'a, V> {
     /// If the entry is occupied, returns a mutable reference to the existing
     /// value. This method provides a convenient way to implement "insert or
     /// get" semantics.
-    pub fn or_insert(self, default: V) -> &'a mut V {
+    pub fn or_insert(
+        self,
+        default: V,
+    ) -> &'a mut V {
         match self {
             Entry::Occupied(entry) => entry.into_mut(),
             Entry::Vacant(entry) => entry.insert(default),
@@ -2045,7 +2155,10 @@ impl<'a, V> Entry<'a, V> {
     ///
     /// * `default` - A closure that returns the value to insert if the entry is
     ///   vacant
-    pub fn or_insert_with(self, default: impl FnOnce() -> V) -> &'a mut V {
+    pub fn or_insert_with(
+        self,
+        default: impl FnOnce() -> V,
+    ) -> &'a mut V {
         match self {
             Entry::Occupied(entry) => entry.into_mut(),
             Entry::Vacant(entry) => entry.insert(default()),
@@ -2062,7 +2175,10 @@ impl<'a, V> Entry<'a, V> {
     /// # Arguments
     ///
     /// * `f` - A closure that modifies the existing value
-    pub fn and_modify(self, f: impl FnOnce(&mut V)) -> Option<&'a mut V> {
+    pub fn and_modify(
+        self,
+        f: impl FnOnce(&mut V),
+    ) -> Option<&'a mut V> {
         match self {
             Entry::Occupied(entry) => {
                 let value = entry.into_mut();
@@ -2109,7 +2225,10 @@ impl<'a, V> VacantEntry<'a, V> {
     ///
     /// The value is inserted at the position determined by the hash and
     /// hopscotch algorithm.
-    pub fn insert(self, value: V) -> &'a mut V {
+    pub fn insert(
+        self,
+        value: V,
+    ) -> &'a mut V {
         self.table.populated += 1;
 
         // SAFETY: A `VacantEntry` is only constructed by `do_vacant_lookup` with:
@@ -2542,7 +2661,10 @@ mod tests {
         value: i32,
     }
 
-    fn hash_key(state: &HashState, key: u64) -> u64 {
+    fn hash_key(
+        state: &HashState,
+        key: u64,
+    ) -> u64 {
         let mut h = state.build_hasher();
         h.write_u64(key);
         h.finish()
@@ -2752,7 +2874,10 @@ mod tests {
         value: i32,
     }
 
-    fn hash_string_key(state: &HashState, key: &str) -> u64 {
+    fn hash_string_key(
+        state: &HashState,
+        key: &str,
+    ) -> u64 {
         let mut h = state.build_hasher();
         h.write(key.as_bytes());
         h.finish()

@@ -30,7 +30,10 @@ trait KeyValuePair: Clone {
     fn new(key: u64) -> Self;
 
     fn hash_key(&self) -> u64;
-    fn eq_key(&self, other: &Self) -> bool;
+    fn eq_key(
+        &self,
+        other: &Self,
+    ) -> bool;
 }
 
 #[derive(Clone)]
@@ -53,7 +56,10 @@ impl KeyValuePair for TestItem {
         hasher.finish()
     }
 
-    fn eq_key(&self, other: &Self) -> bool {
+    fn eq_key(
+        &self,
+        other: &Self,
+    ) -> bool {
         self.key == other.key
     }
 }
@@ -74,7 +80,10 @@ impl KeyValuePair for SmallTestItem {
         hasher.finish()
     }
 
-    fn eq_key(&self, other: &Self) -> bool {
+    fn eq_key(
+        &self,
+        other: &Self,
+    ) -> bool {
         self.key == other.key
     }
 }
@@ -103,7 +112,10 @@ impl KeyValuePair for LargeTestItem {
         hasher.finish()
     }
 
-    fn eq_key(&self, other: &Self) -> bool {
+    fn eq_key(
+        &self,
+        other: &Self,
+    ) -> bool {
         self.key == other.key
     }
 }
@@ -195,7 +207,7 @@ fn bench_insert_random<TestItem: KeyValuePair, const MAX_SIZE: usize>(c: &mut Cr
 }
 
 fn bench_insert_random_preallocated<TestItem: KeyValuePair, const MAX_SIZE: usize>(
-    c: &mut Criterion,
+    c: &mut Criterion
 ) {
     let mut group = c.benchmark_group(format!(
         "insert_random_preallocated_{}",
@@ -359,7 +371,7 @@ fn bench_collect_find<TestItem: KeyValuePair, const MAX_SIZE: usize>(c: &mut Cri
 }
 
 fn bench_collect_find_preallocated<TestItem: KeyValuePair, const MAX_SIZE: usize>(
-    c: &mut Criterion,
+    c: &mut Criterion
 ) {
     let mut group = c.benchmark_group(format!(
         "collect_find_preallocated_{}",
@@ -1348,7 +1360,7 @@ fn bench_mixed_probabilistic<TestItem: KeyValuePair, const MAX_SIZE: usize>(c: &
 }
 
 fn bench_mixed_probabilistic_zipf<TestItem: KeyValuePair, const MAX_SIZE: usize>(
-    c: &mut Criterion,
+    c: &mut Criterion
 ) {
     for exponent in [1.0, 1.3, 1.8] {
         let mut group = c.benchmark_group(format!(
