@@ -2,8 +2,7 @@
 ## Key Takeaways
 - Hop-hash performs well vs Hashbrown for mixed workloads sometimes outperforming it for large
   tables.
-- Hop-hash significantly underperforms Hashbrown for single-operation workloads (get-only or insert-only).
-- Drain performance is better than Hashbrown.
+- Hop-hash underperforms Hashbrown for read-only workloads.
 
 ## Individual Result Graphs
 
@@ -16,6 +15,7 @@ In all cases, Hashbrown is represented with the red line, and Hop-hash is repres
 - Default release profile
 - Default features
 - SipHash hasher
+- Hashbrown version 0.16.0
 - Value-type (32 bytes) is a String of length 20, generated arbitrarily, plus a u64. The String is
   used as the key for hashing and comparisons.
   - Data is pre-generated for a benchmark and then used for all iterations of that benchmark. The

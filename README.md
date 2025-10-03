@@ -1,6 +1,6 @@
 # hop-hash
 
-A high-performance hash table implementation in Rust, utilizing an 8-way hopscotch hashing scheme.
+A hash table implementation in Rust, utilizing an 8-way hopscotch hashing scheme.
 
 Hopscotch hashing is a technique which attempts to place an item within a fixed distance (a
 "neighborhood") of its ideal bucket during insertion. If this fails, an empty spot is located and
@@ -82,8 +82,9 @@ The choice of load factor significantly impacts the performance/memory tradeoff:
 
 - **92% (`density-ninety-two`)**: Provides a balance between performance and memory efficiency for
   larger tables. Note that for small tables this can harm performance by as much as 10-30% in
-  benchmarks, with the exception of iteration, where the performance **improves** across all table
-  sizes for higher densities. For larger tables, the performance impact is relatively muted.
+  benchmarks, with the exception of iteration and drain, where the performance **improves** across
+  all table sizes for higher densities, especially for large value types. For larger tables, the
+  performance impact is relatively muted.
 
 - **97% (`density-ninety-seven`)**: Maximizes memory efficiency at the cost of approximately 3-5%
   performance over `density-ninety-two`. Avoid combining with `eight-way` due to significantly
