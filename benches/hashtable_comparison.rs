@@ -791,7 +791,7 @@ fn bench_remove<TestItem: KeyValuePair, const MAX_SIZE: usize>(c: &mut Criterion
     group.finish();
 }
 
-fn bench_iteration<TestItem: KeyValuePair, const MAX_SIZE: usize>(c: &mut Criterion) {
+fn bench_iteration_warm<TestItem: KeyValuePair, const MAX_SIZE: usize>(c: &mut Criterion) {
     let mut group = c.benchmark_group(format!("iteration_{}", core::any::type_name::<TestItem>()));
     group.plot_config(PlotConfiguration::default().summary_scale(AxisScale::Logarithmic));
 
@@ -857,6 +857,88 @@ fn bench_iteration<TestItem: KeyValuePair, const MAX_SIZE: usize>(c: &mut Criter
     group.finish();
 }
 
+fn bench_iteration_cold<TestItem: KeyValuePair, const MAX_SIZE: usize>(c: &mut Criterion) {
+    let mut group = c.benchmark_group(format!(
+        "iteration_cold_{}",
+        core::any::type_name::<TestItem>()
+    ));
+    group.plot_config(PlotConfiguration::default().summary_scale(AxisScale::Logarithmic));
+
+    for size in SIZES[..=MAX_SIZE].iter() {
+        let hop_capacity = HopHashTable::<TestItem>::with_capacity(*size).capacity();
+        let hashbrown_capacity = HashbrownHashTable::<TestItem>::with_capacity(*size).capacity();
+
+        group.throughput(Throughput::Elements(hop_capacity as u64));
+        group.bench_function(BenchmarkId::new("hop_hash", size), |b| {
+            b.iter_batched(
+                || {
+                    let mut rng = SmallRng::from_os_rng();
+
+                    let mut hop_table = HopHashTable::<TestItem>::with_capacity(0);
+                    for (hash, item) in (0..hop_capacity).map(|_| {
+                        let key = rng.random();
+                        let item = TestItem::new(key);
+                        let hash = item.hash_key();
+                        (hash, item)
+                    }) {
+                        match hop_table.entry(hash, |v| v.eq_key(&item), |v| v.hash_key()) {
+                            hop_hash::hash_table::Entry::Vacant(entry) => {
+                                entry.insert(item.clone());
+                            }
+                            hop_hash::hash_table::Entry::Occupied(_) => unreachable!(),
+                        }
+                    }
+                    hop_table
+                },
+                |hop_table| {
+                    let mut count = 0;
+                    for item in hop_table.iter() {
+                        black_box(item);
+                        count += 1;
+                    }
+                    black_box(count)
+                },
+                BatchSize::SmallInput,
+            )
+        });
+
+        group.throughput(Throughput::Elements(hashbrown_capacity as u64));
+        group.bench_function(BenchmarkId::new("hashbrown", size), |b| {
+            b.iter_batched(
+                || {
+                    let mut rng = SmallRng::from_os_rng();
+                    let mut hashbrown_table = HashbrownHashTable::<TestItem>::with_capacity(0);
+                    for (hash, item) in (0..hashbrown_capacity).map(|_| {
+                        let key = rng.random();
+                        let item = TestItem::new(key);
+                        let hash = item.hash_key();
+                        (hash, item)
+                    }) {
+                        match hashbrown_table.entry(hash, |v| v.eq_key(&item), |v| v.hash_key()) {
+                            HashbrownEntry::Vacant(entry) => {
+                                entry.insert(item.clone());
+                            }
+                            HashbrownEntry::Occupied(_) => unreachable!(),
+                        }
+                    }
+                    hashbrown_table
+                },
+                |hashbrown_table| {
+                    let mut count = 0;
+                    for item in hashbrown_table.iter() {
+                        black_box(item);
+                        count += 1;
+                    }
+                    black_box(count)
+                },
+                BatchSize::SmallInput,
+            )
+        });
+    }
+
+    group.finish();
+}
+
 fn bench_drain<TestItem: KeyValuePair, const MAX_SIZE: usize>(c: &mut Criterion) {
     let mut group = c.benchmark_group(format!("drain_{}", core::any::type_name::<TestItem>()));
     group.plot_config(PlotConfiguration::default().summary_scale(AxisScale::Logarithmic));
@@ -865,21 +947,19 @@ fn bench_drain<TestItem: KeyValuePair, const MAX_SIZE: usize>(c: &mut Criterion)
         let hop_capacity = HopHashTable::<TestItem>::with_capacity(*size).capacity();
         let hashbrown_capacity = HashbrownHashTable::<TestItem>::with_capacity(*size).capacity();
 
-        let hash_and_item = (0..hop_capacity.max(hashbrown_capacity))
-            .map(|i| {
-                let key = i as u64;
-                let item = TestItem::new(key);
-                let hash = item.hash_key();
-                (hash, item)
-            })
-            .collect::<Vec<(u64, TestItem)>>();
-
         group.throughput(Throughput::Elements(hop_capacity as u64));
         group.bench_function(BenchmarkId::new("hop_hash", size), |b| {
             b.iter_batched(
                 || {
+                    let mut rng = SmallRng::from_os_rng();
+
                     let mut table = HopHashTable::<TestItem>::with_capacity(0);
-                    for (hash, item) in hash_and_item.iter().take(hop_capacity).cloned() {
+                    for (hash, item) in (0..hop_capacity).map(|_| {
+                        let key = rng.random();
+                        let item = TestItem::new(key);
+                        let hash = item.hash_key();
+                        (hash, item)
+                    }) {
                         match table.entry(hash, |v| v.eq_key(&item), |v| v.hash_key()) {
                             hop_hash::hash_table::Entry::Vacant(entry) => {
                                 entry.insert(item);
@@ -905,8 +985,14 @@ fn bench_drain<TestItem: KeyValuePair, const MAX_SIZE: usize>(c: &mut Criterion)
         group.bench_function(BenchmarkId::new("hashbrown", size), |b| {
             b.iter_batched(
                 || {
+                    let mut rng = SmallRng::from_os_rng();
                     let mut table = HashbrownHashTable::<TestItem>::with_capacity(0);
-                    for (hash, item) in hash_and_item.iter().take(hashbrown_capacity).cloned() {
+                    for (hash, item) in (0..hashbrown_capacity).map(|_| {
+                        let key = rng.random();
+                        let item = TestItem::new(key);
+                        let hash = item.hash_key();
+                        (hash, item)
+                    }) {
                         match table.entry(hash, |v| v.eq_key(&item), |v| v.hash_key()) {
                             HashbrownEntry::Vacant(entry) => {
                                 entry.insert(item);
@@ -1543,9 +1629,12 @@ criterion_group!(
     bench_remove::<SmallTestItem, 8>,
     bench_remove::<TestItem, 8>,
     bench_remove::<LargeTestItem, 5>,
-    bench_iteration::<SmallTestItem, 8>,
-    bench_iteration::<TestItem, 8>,
-    bench_iteration::<LargeTestItem, 5>,
+    bench_iteration_warm::<SmallTestItem, 8>,
+    bench_iteration_warm::<TestItem, 8>,
+    bench_iteration_warm::<LargeTestItem, 5>,
+    bench_iteration_cold::<SmallTestItem, 8>,
+    bench_iteration_cold::<TestItem, 8>,
+    bench_iteration_cold::<LargeTestItem, 5>,
     bench_drain::<SmallTestItem, 8>,
     bench_drain::<TestItem, 8>,
     bench_drain::<LargeTestItem, 5>,

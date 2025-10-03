@@ -2355,6 +2355,17 @@ impl<V> Iterator for Drain<'_, V> {
         //   returns true, and we take ownership of the value.
         unsafe {
             while self.bucket_index < self.total_slots {
+                let prefetch_index = self.bucket_index + 1;
+                if prefetch_index < self.total_slots {
+                    prefetch(
+                        self.table
+                            .buckets_ptr()
+                            .as_ref()
+                            .as_ptr()
+                            .add(prefetch_index),
+                    );
+                }
+
                 if *self.occupied.get_unchecked(self.bucket_index) != EMPTY {
                     let bucket = self
                         .table
