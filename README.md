@@ -24,12 +24,12 @@ mixed workloads. Consider using `hop-hash` when:
   provides more consistent performance characteristics, though `hashbrown` offers superior lookup
   performance in practice.
 
-- **Memory efficiency matters for your entry size.** For tables with entries of approximately 20
-  bytes or larger, a higher load factor (configurable 92% or 97% vs `hashbrown`'s 87.5%) can
-  offset the additional per-entry metadata overhead (2 bytes vs 1 byte), resulting in comparable or
-  better memory density. Note that this penalizes performance for small tables heavily and there is
-  a minimum table capacity of 144 entries (272 with `sixteen-way`), so this advantage only applies to
-  sufficiently large tables.
+- **You have memory constraints with large tables.** For tables with entries of approximately 20
+  bytes or larger, a higher load factor (configurable 92% or 97% vs `hashbrown`'s 87.5%) can offset
+  the additional per-entry metadata overhead (2 bytes vs 1 byte), resulting in comparable or better
+  memory density. Note that this penalizes performance for small tables and there is a minimum table
+  capacity of 144 entries (272 with `sixteen-way`), so this advantage only applies to sufficiently
+  large tables.
 
 ### Important Limitations
 
@@ -66,24 +66,24 @@ assert_eq!(map.get(&"key2"), None);
 
 ## Choosing a Neighborhood Size
 The default neighborhood size is 8 (`eight-way`), which provides the best overall performance across
-all table sizes and workloads. **Important Caveat:** If you choose to use the `density-ninety-seven`
-feature, you should also use the `sixteen-way` feature, as 8-way with 97% load factor has a high
-risk of over-allocation for large tables.
+all table sizes and workloads.
+
+For `density-ninety-seven`, you should use the `sixteen-way` feature to reduce the risk of
+over-allocation. This setting otherwise has no performance benefit and is not recommended for
+general use.
 
 ## Choosing a Target Load Factor
 
 The choice of load factor significantly impacts the performance/memory tradeoff:
 
 - **87.5% (`density-eighty-seven-point-five`, default)**: The highest performance option. This has
-  higher per-entry overhead than `hashbrown` (2 bytes vs 1 byte).
+  higher per-entry overhead than `hashbrown` (2 bytes vs 1 byte). For e.g. a `HashSet` of `String`s,
+  this translates to approximately 5% more memory usage than `hashbrown` at 87.5% load factor.
 
 - **92% (`density-ninety-two`)**: Provides a balance between performance and memory efficiency for
-  larger tables. Note that for small tables, this can harm performance by as much as 50% in
+  larger tables. Note that for small tables this can harm performance by as much as 10-30% in
   benchmarks, with the exception of iteration, where the performance **improves** across all table
-  sizes for higher densities. The impact of this setting is much more nuanced at larger table sizes,
-  and may either help or harm performance by a few percent. If you have large tables (>32k entries)
-  I'd recommend benchmarking both 87.5% and 92% density with your workload to see which performs
-  better.
+  sizes for higher densities. For larger tables, the performance impact is relatively muted.
 
 - **97% (`density-ninety-seven`)**: Maximizes memory efficiency at the cost of approximately 3-5%
   performance over `density-ninety-two`. Avoid combining with `eight-way` due to significantly

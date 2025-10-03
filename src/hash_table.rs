@@ -231,8 +231,6 @@ unsafe fn find_next_movable_index<V>(
     max_root_mask: usize,
     rehash: &dyn Fn(&V) -> u64,
 ) -> Option<(usize, u64)> {
-    const PREFETCH_DISTANCE: usize = 4;
-
     for idx in bubble_base..empty_idx {
         // SAFETY: The caller guarantees that `idx` is within `bubble_base..empty_idx`
         // and that `empty_idx` is within the bounds of `values`, making
@@ -243,9 +241,6 @@ unsafe fn find_next_movable_index<V>(
         // always found forward from or at the root bucket position). The wrapping
         // behavior handles the algebraic calculation without overflow concerns.
         unsafe {
-            if idx + PREFETCH_DISTANCE < empty_idx {
-                prefetch(values.as_ptr().add(idx + PREFETCH_DISTANCE));
-            }
             let hash = rehash(values.get_unchecked(idx).assume_init_ref());
             let hopmap_index = (hash as usize & max_root_mask) * LANES;
 
