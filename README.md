@@ -1,5 +1,8 @@
 # hop-hash
 
+[![Crates.io](https://img.shields.io/crates/v/hop-hash?style=for-the-badge)](https://crates.io/crates/hop-hash)
+[![docs.rs](https://img.shields.io/docsrs/hop-hash?style=for-the-badge)](https://docs.rs/hop-hash)
+
 A hash table implementation in Rust, utilizing an 8-way hopscotch hashing scheme.
 
 Hopscotch hashing is a technique which attempts to place an item within a fixed distance (a
