@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  no-std-build:
+    name: Build with no-std
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        way: [eight-way, sixteen-way]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build no-std with ${{ matrix.way }}
+        run: cargo build --no-default-features --features ${{ matrix.way }},density-eighty-seven-point-five,foldhash
+
+  miri-test:
+    name: Miri tests
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        way: [eight-way, sixteen-way]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust nightly with miri
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: miri
+
+      - name: Run miri tests with ${{ matrix.way }}
+        run: cargo +nightly miri test --no-default-features --features ${{ matrix.way }},density-eighty-seven-point-five,foldhash
