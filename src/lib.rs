@@ -50,3 +50,4 @@ cfg_if! {
 
 pub use hash_map::Entry;
 pub use hash_table::HashTable;
+pub use hash_table::TryEntryError;

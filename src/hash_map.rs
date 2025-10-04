@@ -5,6 +5,7 @@ use core::hash::Hash;
 
 use crate::hash_table::Entry as TableEntry;
 use crate::hash_table::HashTable;
+use crate::hash_table::TryEntryError;
 
 /// A hash map implemented using the hopscotch HashTable as the underlying
 /// storage.
@@ -583,6 +584,82 @@ where
         ) {
             TableEntry::Occupied(entry) => Entry::Occupied(OccupiedEntry { entry }),
             TableEntry::Vacant(entry) => Entry::Vacant(VacantEntry { entry, key }),
+        }
+    }
+
+    /// Tries to get the given key's corresponding entry in the map for in-place
+    /// manipulation, without resizing the table.
+    ///
+    /// If the table is full or no free slot can be found, returns an error with
+    /// the key.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # #[cfg(any(feature = "std", feature = "foldhash"))]
+    /// # {
+    /// use hop_hash::HashMap;
+    ///
+    /// let mut map: HashMap<i32, &str> = HashMap::with_capacity(10);
+    ///
+    /// match map.try_entry(1) {
+    ///     Ok(entry) => {
+    ///         entry.or_insert("a");
+    ///     }
+    ///     Err((key, _)) => println!("Failed to get entry for key: {}", key),
+    /// }
+    /// # }
+    /// ```
+    pub fn try_entry(
+        &mut self,
+        key: K,
+    ) -> Result<Entry<'_, K, V>, (K, TryEntryError)> {
+        let hash = self.hash_builder.hash_one(&key);
+        match self.table.try_entry(hash, |(k, _)| k == &key) {
+            Ok(TableEntry::Occupied(entry)) => Ok(Entry::Occupied(OccupiedEntry { entry })),
+            Ok(TableEntry::Vacant(entry)) => Ok(Entry::Vacant(VacantEntry { entry, key })),
+            Err(e) => Err((key, e)),
+        }
+    }
+
+    /// Tries to insert a key-value pair into the map without resizing.
+    ///
+    /// If the map did not have this key present, `Ok(None)` is returned.
+    /// If the map did have this key present, the value is updated, and the old
+    /// value is returned as `Ok(Some(old_value))`.
+    /// If the table is full or no free slot can be found, returns an error with
+    /// the key and value.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # #[cfg(any(feature = "std", feature = "foldhash"))]
+    /// # {
+    /// use hop_hash::HashMap;
+    ///
+    /// let mut map: HashMap<i32, &str> = HashMap::with_capacity(10);
+    /// match map.try_insert(37, "a") {
+    ///     Ok(None) => println!("Inserted successfully"),
+    ///     Ok(Some(old)) => println!("Updated, old value: {}", old),
+    ///     Err((k, v, _)) => println!("Failed to insert: {} -> {}", k, v),
+    /// }
+    /// # }
+    /// ```
+    pub fn try_insert(
+        &mut self,
+        key: K,
+        value: V,
+    ) -> Result<Option<V>, (K, V, TryEntryError)> {
+        match self.try_entry(key) {
+            Ok(Entry::Occupied(mut entry)) => {
+                let old_value = entry.insert(value);
+                Ok(Some(old_value))
+            }
+            Ok(Entry::Vacant(entry)) => {
+                entry.insert(value);
+                Ok(None)
+            }
+            Err((key, e)) => Err((key, value, e)),
         }
     }
 

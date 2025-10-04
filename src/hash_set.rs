@@ -4,6 +4,7 @@ use core::hash::BuildHasher;
 use core::hash::Hash;
 
 use crate::hash_table::HashTable;
+use crate::hash_table::TryEntryError;
 
 /// A hash set implemented using the hopscotch HashTable as the underlying
 /// storage.
@@ -275,6 +276,46 @@ where
                 entry.insert(value);
                 true
             }
+        }
+    }
+
+    /// Tries to add a value to the set without resizing.
+    ///
+    /// Returns whether the value was newly inserted. That is:
+    ///
+    /// - If the set did not previously contain this value, `Ok(true)` is
+    ///   returned.
+    /// - If the set already contained this value, `Ok(false)` is returned.
+    /// - If the table is full or no free slot can be found, returns an error
+    ///   with the value.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # #[cfg(any(feature = "std", feature = "foldhash"))]
+    /// # {
+    /// use hop_hash::HashSet;
+    ///
+    /// let mut set: HashSet<i32> = HashSet::with_capacity(10);
+    /// match set.try_insert(37) {
+    ///     Ok(true) => println!("Value was inserted"),
+    ///     Ok(false) => println!("Value was already present"),
+    ///     Err((value, _)) => println!("Failed to insert: {}", value),
+    /// }
+    /// # }
+    /// ```
+    pub fn try_insert(
+        &mut self,
+        value: T,
+    ) -> Result<bool, (T, TryEntryError)> {
+        let hash = self.hash_builder.hash_one(&value);
+        match self.table.try_entry(hash, |v| v == &value) {
+            Ok(crate::hash_table::Entry::Occupied(_)) => Ok(false),
+            Ok(crate::hash_table::Entry::Vacant(entry)) => {
+                entry.insert(value);
+                Ok(true)
+            }
+            Err(e) => Err((value, e)),
         }
     }
 
