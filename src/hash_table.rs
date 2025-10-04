@@ -133,11 +133,38 @@ use core::alloc::Layout;
 use core::arch::x86::*;
 #[cfg(target_arch = "x86_64")]
 use core::arch::x86_64::*;
+use core::error::Error;
 use core::fmt::Debug;
+use core::fmt::Display;
 use core::mem::MaybeUninit;
 use core::ptr::NonNull;
 
 use cfg_if::cfg_if;
+
+/// Errors that can occur during a `try_entry` operation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TryEntryError {
+    /// The table is full and cannot accommodate more entries. The table needs a
+    /// resize.
+    CapacityTooSmall,
+    /// No free slot was found in the table that was a candidate for insertion.
+    /// The table needs a resize.
+    NoFreeSlot,
+}
+
+impl Display for TryEntryError {
+    fn fmt(
+        &self,
+        f: &mut core::fmt::Formatter<'_>,
+    ) -> core::fmt::Result {
+        match self {
+            TryEntryError::CapacityTooSmall => write!(f, "table is full"),
+            TryEntryError::NoFreeSlot => write!(f, "no free slot found"),
+        }
+    }
+}
+
+impl Error for TryEntryError {}
 
 cfg_if! {
     // Try to save someone if they are in a situation where multiple versions of the crate
@@ -200,11 +227,13 @@ const EMPTY: u8 = 0x80;
 // operations, but we only support SSE2 + it wastes a lot of space if it's
 // wider than 16.
 cfg_if! {
-    if #[cfg(feature = "eight-way")] {
+    if #[cfg(feature = "sixteen-way")] {
+        const HOP_RANGE: usize = 16;
+    } else if #[cfg(feature = "eight-way")] {
         const HOP_RANGE: usize = 8;
     // If they didn't specify and picked density-ninety-seven, assume they want 16-way
     // since 8-way with 97% is highly likely to over-allocate for large tables.
-    } else if #[cfg(any(feature = "sixteen-way",  feature = "density-ninety-seven"))] {
+    } else if #[cfg(feature = "density-ninety-seven")] {
         const HOP_RANGE: usize = 16;
     }else {
         const HOP_RANGE: usize = 8;
@@ -1111,6 +1140,117 @@ impl<V> HashTable<V> {
         unsafe { self.entry_impl(hash, eq, &rehash) }
     }
 
+    /// Gets an entry for the given hash and equality predicate without
+    /// triggering a resize.
+    ///
+    /// This method returns an `Entry` enum that allows for efficient insertion
+    /// or modification of values, similar to [`entry`](HashTable::entry), but
+    /// without automatically resizing the table. If the table is full or cannot
+    /// accommodate the entry without resizing or bubbling, an error is returned
+    /// instead.
+    ///
+    /// This method provides a constant-time worst-case bound for insertion,
+    /// provided you can tolerate failures. It will at most search the
+    /// neighborhood of the root bucket for an empty slot (rather than the
+    /// entire table), and will not attempt to resize or bubble entries.o
+    ///
+    /// For medium to large tables with a reasonable load factor, this has a
+    /// very high success rate, as most insertions will find a free slot in
+    /// the neighborhood.
+    ///
+    /// # Arguments
+    ///
+    /// * `hash` - The hash value for the entry
+    /// * `eq` - A predicate function that returns `true` for matching values
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`TryEntryError`] if:
+    /// - The table is at capacity
+    ///   ([`CapacityTooSmall`](TryEntryError::CapacityTooSmall))
+    /// - No free slot is available ([`NoFreeSlot`](TryEntryError::NoFreeSlot))
+    pub fn try_entry(
+        &mut self,
+        hash: u64,
+        eq: impl Fn(&V) -> bool,
+    ) -> Result<Entry<'_, V>, TryEntryError> {
+        if self.max_pop == 0 {
+            return Err(TryEntryError::CapacityTooSmall);
+        }
+
+        let hop_bucket = self.hopmap_index(hash);
+
+        // SAFETY: We have validated that `hop_bucket` is within bounds through
+        // `hopmap_index`, which derives it from the hash and `max_root_mask`. We have a
+        // non-zero capacity, so there is at least one bucket.
+        if let Some(index) = unsafe { self.search_neighborhood(hash, hop_bucket, &eq) } {
+            return Ok(Entry::Occupied(OccupiedEntry {
+                n_index: index - hop_bucket * LANES,
+                table: self,
+                root_index: hop_bucket,
+            }));
+        }
+
+        if self.populated >= self.max_pop {
+            return Err(TryEntryError::CapacityTooSmall);
+        }
+
+        let absolute_empty_idx;
+        // SAFETY: We have validated that `hop_bucket` is within bounds through
+        // `hopmap_index`, which derives it from the hash and `max_root_mask`.
+        // We know that there are HOP_RANGE * LANES slots in the neighborhood, due to
+        // how capacity is calculated.
+        unsafe {
+            let Some(empty_idx) =
+                self.find_next_unoccupied_in_range(self.absolute_index(hop_bucket, 0))
+            else {
+                return Err(TryEntryError::NoFreeSlot);
+            };
+            absolute_empty_idx = empty_idx;
+        };
+
+        // SAFETY: We have validated `absolute_empty_idx` through
+        // `find_next_unoccupied_in_range`.
+        debug_assert!(unsafe { !self.is_occupied(absolute_empty_idx) });
+
+        Ok(Entry::Vacant(VacantEntry {
+            table: self,
+            hopmap_root: hop_bucket,
+            hash,
+            n_index: absolute_empty_idx - hop_bucket * LANES,
+        }))
+    }
+
+    /// Internal entry implementation that performs the actual lookup.
+    ///
+    /// # Safety
+    ///
+    /// The capacity must not be zero.
+    #[inline]
+    unsafe fn entry_impl(
+        &mut self,
+        hash: u64,
+        eq: impl Fn(&V) -> bool,
+        rehash: &dyn Fn(&V) -> u64,
+    ) -> Entry<'_, V> {
+        let hop_bucket = self.hopmap_index(hash);
+
+        // SAFETY: We have ensured that `hop_bucket` is within bounds, as it is derived
+        // from the hash and mask.
+        let index = unsafe { self.search_neighborhood(hash, hop_bucket, &eq) };
+        if let Some(index) = index {
+            return Entry::Occupied(OccupiedEntry {
+                n_index: index - hop_bucket * LANES,
+                table: self,
+                root_index: hop_bucket,
+            });
+        }
+
+        // SAFETY: We have ensured `hop_bucket` is within bounds, as it is derived from
+        // the hash and mask.
+        Entry::Vacant(unsafe { self.do_vacant_lookup(hash, hop_bucket, rehash) })
+    }
+
     /// Search the neighborhood of a given bucket for a matching value.
     ///
     /// # Safety
@@ -1318,36 +1458,6 @@ impl<V> HashTable<V> {
         hop_bucket * LANES + n_index
     }
 
-    /// Internal entry implementation that performs the actual lookup.
-    ///
-    /// # Safety
-    ///
-    /// The capacity must not be zero.
-    #[inline]
-    unsafe fn entry_impl(
-        &mut self,
-        hash: u64,
-        eq: impl Fn(&V) -> bool,
-        rehash: &dyn Fn(&V) -> u64,
-    ) -> Entry<'_, V> {
-        let hop_bucket = self.hopmap_index(hash);
-
-        // SAFETY: We have ensured that `hop_bucket` is within bounds, as it is derived
-        // from the hash and mask.
-        let index = unsafe { self.search_neighborhood(hash, hop_bucket, &eq) };
-        if let Some(index) = index {
-            return Entry::Occupied(OccupiedEntry {
-                n_index: index - hop_bucket * LANES,
-                table: self,
-                root_index: hop_bucket,
-            });
-        }
-
-        // SAFETY: We have ensured `hop_bucket` is within bounds, as it is derived from
-        // the hash and mask.
-        Entry::Vacant(unsafe { self.do_vacant_lookup(hash, hop_bucket, rehash) })
-    }
-
     /// Perform a vacant lookup, finding or creating a suitable slot for
     /// insertion
     ///
@@ -1509,6 +1619,89 @@ impl<V> HashTable<V> {
         }
     }
 
+    /// Find the next unoccupied index in the range starting from `start` and
+    /// only examining the next `HOP_RANGE * LANES` slots.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure `start` is within the bounds of the tags array
+    /// and that there are at least `HOP_RANGE * LANES` slots available from
+    /// `start`.
+    #[inline(always)]
+    unsafe fn find_next_unoccupied_in_range(
+        &self,
+        start: usize,
+    ) -> Option<usize> {
+        cfg_if! {
+            if #[cfg(all(
+                any(target_arch = "x86_64", target_arch = "x86"),
+                target_feature = "sse2"
+            ))] {
+                // SAFETY: Caller ensures `start` is within bounds and there are enough slots
+                // to examine.
+                unsafe { self.find_next_unoccupied_in_range_sse2(start) }
+            } else {
+                let end = start + HOP_RANGE * LANES;
+                let meta_ptr = self.tags_ptr();
+                for i in start..end {
+                    // SAFETY: Caller ensures `i` is within bounds of the tags array
+                    let t = unsafe { *meta_ptr.as_ref().get_unchecked(i) };
+                    if t == EMPTY {
+                        return Some(i);
+                    }
+                }
+                None
+            }
+        }
+    }
+
+    /// SSE2 optimized version of find_next_unoccupied_in_range
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure `start` is within the bounds of the tags array
+    /// and that there are at least `HOP_RANGE * LANES` slots available from
+    /// `start`. This relies on `EMPTY` (0x80) having the sign bit set for
+    /// `movemask` to find empty slots.
+    #[cfg(all(
+        any(target_arch = "x86_64", target_arch = "x86"),
+        target_feature = "sse2"
+    ))]
+    unsafe fn find_next_unoccupied_in_range_sse2(
+        &self,
+        start: usize,
+    ) -> Option<usize> {
+        unsafe {
+            let meta_ptr = self.tags_ptr();
+            let tags_ptr = meta_ptr.as_ref().as_ptr().add(start);
+            let len = (meta_ptr.as_ref().len()).saturating_sub(start);
+            let end = HOP_RANGE * LANES.min(len);
+
+            let mut offset = 0;
+            while offset + LANES <= end {
+                let data = _mm_loadu_si128(tags_ptr.add(offset) as *const __m128i);
+                let mask = _mm_movemask_epi8(data) as u16;
+
+                if mask != 0 {
+                    let tz = mask.trailing_zeros() as usize;
+                    return Some(start + offset + tz);
+                }
+
+                offset += LANES;
+            }
+
+            while offset < end {
+                let byte = *tags_ptr.add(offset);
+                if byte == EMPTY {
+                    return Some(start + offset);
+                }
+                offset += 1;
+            }
+
+            None
+        }
+    }
+
     /// Find the next unoccupied index starting from `start`
     ///
     /// # Safety
@@ -1550,7 +1743,6 @@ impl<V> HashTable<V> {
         &self,
         start: usize,
     ) -> Option<usize> {
-        use core::arch::x86_64::*;
         unsafe {
             let meta_ptr = self.tags_ptr();
             let tags_ptr = meta_ptr.as_ref().as_ptr().add(start);
@@ -2120,6 +2312,7 @@ impl<V> IntoIterator for HashTable<V> {
 /// It provides efficient APIs for insertion and modification operations.
 ///
 /// [`entry`]: HashTable::entry
+#[derive(Debug)]
 pub enum Entry<'a, V> {
     /// A vacant entry - the key is not present in the table
     Vacant(VacantEntry<'a, V>),
@@ -2212,6 +2405,7 @@ impl<'a, V> Entry<'a, V> {
 /// a value into the vacant slot.
 ///
 /// [`entry`]: HashTable::entry
+#[derive(Debug)]
 pub struct VacantEntry<'a, V> {
     table: &'a mut HashTable<V>,
     hopmap_root: usize,
@@ -2270,6 +2464,7 @@ impl<'a, V> VacantEntry<'a, V> {
 /// modify, or remove the existing value.
 ///
 /// [`entry`]: HashTable::entry
+#[derive(Debug)]
 pub struct OccupiedEntry<'a, V> {
     table: &'a mut HashTable<V>,
     root_index: usize,
@@ -3915,5 +4110,260 @@ mod tests {
                 assert_eq!(found.unwrap().value, k as i32);
             }
         }
+    }
+
+    #[test]
+    fn try_entry_vacant_success() {
+        let state = HashState::default();
+        let mut table: HashTable<Item> = HashTable::with_capacity(100);
+
+        let k = 42u64;
+        let hash = hash_key(&state, k);
+
+        match table.try_entry(hash, |v| v.key == k) {
+            Ok(Entry::Vacant(v)) => {
+                v.insert(Item { key: k, value: 100 });
+            }
+            Ok(Entry::Occupied(_)) => panic!("should be vacant"),
+            Err(e) => panic!("should succeed: {:?}", e),
+        }
+
+        assert_eq!(table.len(), 1);
+        assert_eq!(
+            table.find(hash, |v| v.key == k),
+            Some(&Item { key: k, value: 100 })
+        );
+    }
+
+    #[test]
+    fn try_entry_occupied_success() {
+        let state = HashState::default();
+        let mut table: HashTable<Item> = HashTable::with_capacity(100);
+
+        let k = 42u64;
+        let hash = hash_key(&state, k);
+
+        match table.try_entry(hash, |v| v.key == k) {
+            Ok(Entry::Vacant(v)) => {
+                v.insert(Item { key: k, value: 100 });
+            }
+            _ => panic!("first should be vacant"),
+        }
+
+        match table.try_entry(hash, |v| v.key == k) {
+            Ok(Entry::Occupied(mut occ)) => {
+                assert_eq!(occ.get().value, 100);
+                occ.get_mut().value = 200;
+            }
+            Ok(Entry::Vacant(_)) => panic!("should be occupied"),
+            Err(e) => panic!("should succeed: {:?}", e),
+        }
+
+        assert_eq!(table.len(), 1);
+        assert_eq!(
+            table.find(hash, |v| v.key == k),
+            Some(&Item { key: k, value: 200 })
+        );
+    }
+
+    #[test]
+    fn try_entry_capacity_too_small() {
+        let state = HashState::default();
+        let mut table: HashTable<Item> = HashTable::with_capacity(10);
+
+        let capacity = table.capacity();
+        for k in 0..capacity as u64 {
+            let hash = hash_key(&state, k);
+            match table.try_entry(hash, |v| v.key == k) {
+                Ok(Entry::Vacant(v)) => {
+                    v.insert(Item {
+                        key: k,
+                        value: k as i32,
+                    });
+                }
+                Err(e) => panic!("should succeed before capacity: {:?}", e),
+                _ => panic!("should be vacant"),
+            }
+        }
+
+        assert_eq!(table.len(), capacity);
+
+        let k = capacity as u64;
+        let hash = hash_key(&state, k);
+        match table.try_entry(hash, |v| v.key == k) {
+            Err(TryEntryError::CapacityTooSmall) => {}
+            Ok(_) => panic!("should fail with CapacityTooSmall"),
+            Err(e) => panic!("wrong error: {:?}", e),
+        }
+    }
+
+    #[test]
+    fn try_entry_no_free_slot_in_range() {
+        let mut table: HashTable<Item> = HashTable::with_capacity(100);
+
+        let capacity = table.capacity();
+        let target_fill = (capacity * 9) / 10;
+
+        let mut inserted = 0;
+        let hash = 0u64;
+
+        while inserted < target_fill {
+            match table.try_entry(hash, |_| false) {
+                Ok(Entry::Vacant(v)) => {
+                    v.insert(Item {
+                        key: inserted as u64,
+                        value: inserted as i32,
+                    });
+                    inserted += 1;
+                }
+                Ok(Entry::Occupied(_)) => {}
+                Err(TryEntryError::NoFreeSlot) => break,
+                Err(TryEntryError::CapacityTooSmall) => break,
+            }
+        }
+
+        assert_eq!(
+            table.try_entry(hash, |_| false).err(),
+            Some(TryEntryError::NoFreeSlot)
+        );
+        assert!(!table.is_empty());
+        assert!(table.len() <= capacity);
+    }
+
+    #[test]
+    fn try_entry_multiple_insertions() {
+        let state = HashState::default();
+        let mut table: HashTable<Item> = HashTable::with_capacity(50);
+
+        let keys = [1u64, 5, 10, 15, 20, 25, 30];
+
+        for &k in &keys {
+            let hash = hash_key(&state, k);
+            match table.try_entry(hash, |v| v.key == k) {
+                Ok(Entry::Vacant(v)) => {
+                    v.insert(Item {
+                        key: k,
+                        value: (k * 10) as i32,
+                    });
+                }
+                Err(e) => panic!("insertion failed for key {}: {:?}", k, e),
+                _ => panic!("should be vacant for key {}", k),
+            }
+        }
+
+        assert_eq!(table.len(), keys.len());
+
+        for &k in &keys {
+            let hash = hash_key(&state, k);
+            assert_eq!(
+                table.find(hash, |v| v.key == k),
+                Some(&Item {
+                    key: k,
+                    value: (k * 10) as i32
+                })
+            );
+        }
+    }
+
+    #[test]
+    fn try_entry_does_not_resize() {
+        let state = HashState::default();
+        let mut table: HashTable<Item> = HashTable::with_capacity(10);
+
+        let initial_capacity = table.capacity();
+
+        for k in 0..initial_capacity as u64 {
+            let hash = hash_key(&state, k);
+            let _ = table.try_entry(hash, |v| v.key == k).map(|e| {
+                e.or_insert(Item {
+                    key: k,
+                    value: k as i32,
+                })
+            });
+        }
+
+        assert_eq!(table.capacity(), initial_capacity);
+
+        let k = initial_capacity as u64;
+        let hash = hash_key(&state, k);
+        assert!(table.try_entry(hash, |v| v.key == k).is_err());
+
+        assert_eq!(table.capacity(), initial_capacity);
+    }
+
+    #[test]
+    fn try_entry_vacant_or_insert() {
+        let state = HashState::default();
+        let mut table: HashTable<Item> = HashTable::with_capacity(50);
+
+        let k = 100u64;
+        let hash = hash_key(&state, k);
+
+        let result = table
+            .try_entry(hash, |v| v.key == k)
+            .map(|e| e.or_insert(Item { key: k, value: 500 }));
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().value, 500);
+        assert_eq!(table.len(), 1);
+
+        let result = table
+            .try_entry(hash, |v| v.key == k)
+            .map(|e| e.or_insert(Item { key: k, value: 999 }));
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().value, 500);
+        assert_eq!(table.len(), 1);
+    }
+
+    #[test]
+    fn try_entry_with_collision() {
+        let state = HashState::default();
+        let mut table: HashTable<Item> = HashTable::with_capacity(50);
+
+        for k in 0..20u64 {
+            let hash = hash_key(&state, k);
+            match table.try_entry(hash, |v| v.key == k) {
+                Ok(Entry::Vacant(v)) => {
+                    v.insert(Item {
+                        key: k,
+                        value: k as i32,
+                    });
+                }
+                Err(e) => panic!("should succeed: {:?}", e),
+                _ => panic!("should be vacant"),
+            }
+        }
+
+        for k in 0..20u64 {
+            let hash = hash_key(&state, k);
+            match table.try_entry(hash, |v| v.key == k) {
+                Ok(Entry::Occupied(occ)) => {
+                    assert_eq!(occ.get().key, k);
+                    assert_eq!(occ.get().value, k as i32);
+                }
+                _ => panic!("should be occupied for key {}", k),
+            }
+        }
+    }
+
+    #[test]
+    fn try_entry_empty_table() {
+        let state = HashState::default();
+        let mut table: HashTable<Item> = HashTable::with_capacity(10);
+
+        let k = 1u64;
+        let hash = hash_key(&state, k);
+
+        assert_eq!(table.len(), 0);
+
+        match table.try_entry(hash, |v| v.key == k) {
+            Ok(Entry::Vacant(v)) => {
+                v.insert(Item { key: k, value: 42 });
+            }
+            _ => panic!("should be vacant in empty table"),
+        }
+
+        assert_eq!(table.len(), 1);
     }
 }

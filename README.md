@@ -5,8 +5,9 @@ A hash table implementation in Rust, utilizing an 8-way hopscotch hashing scheme
 Hopscotch hashing is a technique which attempts to place an item within a fixed distance (a
 "neighborhood") of its ideal bucket during insertion. If this fails, an empty spot is located and
 bubbled backwards until it is within the neighborhood. This provides the nice effect that lookups
-and removals have constant-time worst-case behavior, and insertion has amortized constant-time
-behavior.
+and removals have constant-time worst-case behavior, while insertion still has amortized constant-time
+behavior. For workloads that cannot tolerate amortized behavior, the `try_entry` API provides a
+constant-time insertion guarantee by failing instead of bubbling or resizing the table.
 
 This crate provides `HashMap` and `HashSet` implementations built on top of a lower-level
 `HashTable` structure.
