@@ -8,6 +8,7 @@ categories   = [ "data-structures", "algorithms", "no-std", "performance" ]
 keywords     = [ "hashmap", "hashset", "hashtable", "hopscotch", "no-std" ]
 readme       = "README.md"
 repository   = "https://github.com/jesterhearts/hop-hash"
+description  = "A Rust hash table using 8-way hopscotch hashing with constant-time worst-case lookups, and SIMD acceleration."
 
 [features]
 default                         = [ "std", "foldhash", "density-eighty-seven-point-five", "eight-way" ]
