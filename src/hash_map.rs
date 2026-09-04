@@ -1216,8 +1216,8 @@ mod tests {
     use alloc::vec::Vec;
     use core::hash::BuildHasher;
 
-    use rand::TryRngCore;
-    use rand::rngs::OsRng;
+    use rand::TryRng;
+    use rand::rngs::SysRng;
     use siphasher::sip::SipHasher;
 
     use super::*;
@@ -1238,7 +1238,7 @@ mod tests {
 
     impl Default for SipHashBuilder {
         fn default() -> Self {
-            let mut rng = OsRng;
+            let mut rng = SysRng;
             Self {
                 k1: rng.try_next_u64().unwrap_or(0),
                 k2: rng.try_next_u64().unwrap_or(0),

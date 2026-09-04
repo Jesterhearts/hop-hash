@@ -14,12 +14,11 @@ use criterion::criterion_main;
 use hashbrown::hash_table::Entry as HashbrownEntry;
 use hashbrown::hash_table::HashTable as HashbrownHashTable;
 use hop_hash::HashTable as HopHashTable;
-use rand::Rng;
-use rand::SeedableRng;
-use rand::TryRngCore;
+use rand::RngExt;
+use rand::TryRng;
 use rand::distr;
-use rand::rngs::OsRng;
 use rand::rngs::SmallRng;
+use rand::rngs::SysRng;
 use rand::seq::SliceRandom;
 use rand_distr::Zipf;
 use siphasher::sip::SipHasher;
@@ -132,6 +131,10 @@ const SIZES: &[usize] = &[
     (1 << 18),
 ];
 
+fn small_rng() -> SmallRng {
+    rand::make_rng()
+}
+
 fn bench_insert_random<TestItem: KeyValuePair, const MAX_SIZE: usize>(c: &mut Criterion) {
     let mut group = c.benchmark_group(format!(
         "insert_random_{}",
@@ -139,7 +142,7 @@ fn bench_insert_random<TestItem: KeyValuePair, const MAX_SIZE: usize>(c: &mut Cr
     ));
     group.plot_config(PlotConfiguration::default().summary_scale(AxisScale::Logarithmic));
 
-    let mut rng = OsRng;
+    let mut rng = SysRng;
 
     for size in SIZES[..=MAX_SIZE].iter() {
         let hop_capacity = HopHashTable::<TestItem>::with_capacity(*size).capacity();
@@ -159,7 +162,7 @@ fn bench_insert_random<TestItem: KeyValuePair, const MAX_SIZE: usize>(c: &mut Cr
             b.iter_batched(
                 || {
                     let mut hash_and_item = hash_and_item.clone();
-                    hash_and_item.shuffle(&mut SmallRng::from_os_rng());
+                    hash_and_item.shuffle(&mut small_rng());
                     hash_and_item
                 },
                 |hash_and_item| {
@@ -183,7 +186,7 @@ fn bench_insert_random<TestItem: KeyValuePair, const MAX_SIZE: usize>(c: &mut Cr
             b.iter_batched(
                 || {
                     let mut hash_and_item = hash_and_item.clone();
-                    hash_and_item.shuffle(&mut SmallRng::from_os_rng());
+                    hash_and_item.shuffle(&mut small_rng());
                     hash_and_item
                 },
                 |hash_and_item| {
@@ -215,7 +218,7 @@ fn bench_insert_random_preallocated<TestItem: KeyValuePair, const MAX_SIZE: usiz
     ));
     group.plot_config(PlotConfiguration::default().summary_scale(AxisScale::Logarithmic));
 
-    let mut rng = OsRng;
+    let mut rng = SysRng;
 
     for size in SIZES[..=MAX_SIZE].iter() {
         let hop_capacity = HopHashTable::<TestItem>::with_capacity(*size).capacity();
@@ -235,7 +238,7 @@ fn bench_insert_random_preallocated<TestItem: KeyValuePair, const MAX_SIZE: usiz
             b.iter_batched(
                 || {
                     let mut hash_and_item = hash_and_item.clone();
-                    hash_and_item.shuffle(&mut SmallRng::from_os_rng());
+                    hash_and_item.shuffle(&mut small_rng());
                     hash_and_item
                 },
                 |hash_and_item| {
@@ -259,7 +262,7 @@ fn bench_insert_random_preallocated<TestItem: KeyValuePair, const MAX_SIZE: usiz
             b.iter_batched(
                 || {
                     let mut hash_and_item = hash_and_item.clone();
-                    hash_and_item.shuffle(&mut SmallRng::from_os_rng());
+                    hash_and_item.shuffle(&mut small_rng());
                     hash_and_item
                 },
                 |hash_and_item| {
@@ -309,9 +312,9 @@ fn bench_collect_find<TestItem: KeyValuePair, const MAX_SIZE: usize>(c: &mut Cri
             b.iter_batched(
                 || {
                     let mut hash_and_item = hash_and_item.clone();
-                    hash_and_item.shuffle(&mut SmallRng::from_os_rng());
+                    hash_and_item.shuffle(&mut small_rng());
                     let mut lookup_hash_and_item = lookup_hash_and_item.clone();
-                    lookup_hash_and_item.shuffle(&mut SmallRng::from_os_rng());
+                    lookup_hash_and_item.shuffle(&mut small_rng());
                     (hash_and_item, lookup_hash_and_item)
                 },
                 |(hash_and_item, lookup_hash_and_item)| {
@@ -340,9 +343,9 @@ fn bench_collect_find<TestItem: KeyValuePair, const MAX_SIZE: usize>(c: &mut Cri
             b.iter_batched(
                 || {
                     let mut hash_and_item = hash_and_item.clone();
-                    hash_and_item.shuffle(&mut SmallRng::from_os_rng());
+                    hash_and_item.shuffle(&mut small_rng());
                     let mut lookup_hash_and_item = lookup_hash_and_item.clone();
-                    lookup_hash_and_item.shuffle(&mut SmallRng::from_os_rng());
+                    lookup_hash_and_item.shuffle(&mut small_rng());
                     (hash_and_item, lookup_hash_and_item)
                 },
                 |(hash_and_item, lookup_hash_and_item)| {
@@ -399,9 +402,9 @@ fn bench_collect_find_preallocated<TestItem: KeyValuePair, const MAX_SIZE: usize
             b.iter_batched(
                 || {
                     let mut hash_and_item = hash_and_item.clone();
-                    hash_and_item.shuffle(&mut SmallRng::from_os_rng());
+                    hash_and_item.shuffle(&mut small_rng());
                     let mut lookup_hash_and_item = lookup_hash_and_item.clone();
-                    lookup_hash_and_item.shuffle(&mut SmallRng::from_os_rng());
+                    lookup_hash_and_item.shuffle(&mut small_rng());
                     (hash_and_item, lookup_hash_and_item)
                 },
                 |(hash_and_item, lookup_hash_and_item)| {
@@ -430,9 +433,9 @@ fn bench_collect_find_preallocated<TestItem: KeyValuePair, const MAX_SIZE: usize
             b.iter_batched(
                 || {
                     let mut hash_and_item = hash_and_item.clone();
-                    hash_and_item.shuffle(&mut SmallRng::from_os_rng());
+                    hash_and_item.shuffle(&mut small_rng());
                     let mut lookup_hash_and_item = lookup_hash_and_item.clone();
-                    lookup_hash_and_item.shuffle(&mut SmallRng::from_os_rng());
+                    lookup_hash_and_item.shuffle(&mut small_rng());
                     (hash_and_item, lookup_hash_and_item)
                 },
                 |(hash_and_item, lookup_hash_and_item)| {
@@ -511,7 +514,7 @@ fn bench_find_hit_miss<TestItem: KeyValuePair, const MAX_SIZE: usize>(c: &mut Cr
             b.iter_batched(
                 || {
                     let mut combined_hash_and_key = combined_hash_and_key[..hop_capacity].to_vec();
-                    combined_hash_and_key.shuffle(&mut SmallRng::from_os_rng());
+                    combined_hash_and_key.shuffle(&mut small_rng());
                     combined_hash_and_key
                 },
                 |combined_hash_and_key| {
@@ -539,7 +542,7 @@ fn bench_find_hit_miss<TestItem: KeyValuePair, const MAX_SIZE: usize>(c: &mut Cr
                 || {
                     let mut combined_hash_and_key =
                         combined_hash_and_key[..hashbrown_capacity].to_vec();
-                    combined_hash_and_key.shuffle(&mut SmallRng::from_os_rng());
+                    combined_hash_and_key.shuffle(&mut small_rng());
                     combined_hash_and_key
                 },
                 |combined_hash_and_key| {
@@ -588,7 +591,7 @@ fn bench_find_hit<TestItem: KeyValuePair, const MAX_SIZE: usize>(c: &mut Criteri
             b.iter_batched(
                 || {
                     let mut hash_and_item = hash_and_item[..hop_capacity].to_vec();
-                    hash_and_item.shuffle(&mut SmallRng::from_os_rng());
+                    hash_and_item.shuffle(&mut small_rng());
                     hash_and_item
                 },
                 |hash_and_item| {
@@ -615,7 +618,7 @@ fn bench_find_hit<TestItem: KeyValuePair, const MAX_SIZE: usize>(c: &mut Criteri
             b.iter_batched(
                 || {
                     let mut hash_and_item = hash_and_item[..hashbrown_capacity].to_vec();
-                    hash_and_item.shuffle(&mut SmallRng::from_os_rng());
+                    hash_and_item.shuffle(&mut small_rng());
                     hash_and_item
                 },
                 |hash_and_item| {
@@ -675,7 +678,7 @@ fn bench_find_miss<TestItem: KeyValuePair, const MAX_SIZE: usize>(c: &mut Criter
             b.iter_batched(
                 || {
                     let mut misses_hash_and_key = misses_hash_and_key.clone();
-                    misses_hash_and_key.shuffle(&mut SmallRng::from_os_rng());
+                    misses_hash_and_key.shuffle(&mut small_rng());
                     misses_hash_and_key
                 },
                 |misses_hash_and_key| {
@@ -702,7 +705,7 @@ fn bench_find_miss<TestItem: KeyValuePair, const MAX_SIZE: usize>(c: &mut Criter
             b.iter_batched(
                 || {
                     let mut misses_hash_and_key = misses_hash_and_key.clone();
-                    misses_hash_and_key.shuffle(&mut SmallRng::from_os_rng());
+                    misses_hash_and_key.shuffle(&mut small_rng());
                     misses_hash_and_key
                 },
                 |misses_hash_and_key| {
@@ -751,7 +754,7 @@ fn bench_remove<TestItem: KeyValuePair, const MAX_SIZE: usize>(c: &mut Criterion
                 || {
                     let mut hash_and_item = hash_and_item[..hop_capacity].to_vec();
                     let table = table.clone();
-                    hash_and_item.shuffle(&mut SmallRng::from_os_rng());
+                    hash_and_item.shuffle(&mut small_rng());
                     (table, hash_and_item)
                 },
                 |(mut table, hash_and_item)| {
@@ -782,7 +785,7 @@ fn bench_remove<TestItem: KeyValuePair, const MAX_SIZE: usize>(c: &mut Criterion
                     let mut hash_and_item = hash_and_item[..hashbrown_capacity].to_vec();
 
                     let table = table.clone();
-                    hash_and_item.shuffle(&mut SmallRng::from_os_rng());
+                    hash_and_item.shuffle(&mut small_rng());
                     (table, hash_and_item)
                 },
                 |(mut table, hash_and_item)| {
@@ -884,7 +887,7 @@ fn bench_iteration_cold<TestItem: KeyValuePair, const MAX_SIZE: usize>(c: &mut C
         group.bench_function(BenchmarkId::new("hop_hash", size), |b| {
             b.iter_batched(
                 || {
-                    let mut rng = SmallRng::from_os_rng();
+                    let mut rng = small_rng();
 
                     let mut hop_table = HopHashTable::<TestItem>::with_capacity(0);
                     for (hash, item) in (0..hop_capacity).map(|_| {
@@ -918,7 +921,7 @@ fn bench_iteration_cold<TestItem: KeyValuePair, const MAX_SIZE: usize>(c: &mut C
         group.bench_function(BenchmarkId::new("hashbrown", size), |b| {
             b.iter_batched(
                 || {
-                    let mut rng = SmallRng::from_os_rng();
+                    let mut rng = small_rng();
                     let mut hashbrown_table = HashbrownHashTable::<TestItem>::with_capacity(0);
                     for (hash, item) in (0..hashbrown_capacity).map(|_| {
                         let key = rng.random();
@@ -963,7 +966,7 @@ fn bench_drain<TestItem: KeyValuePair, const MAX_SIZE: usize>(c: &mut Criterion)
         group.bench_function(BenchmarkId::new("hop_hash", size), |b| {
             b.iter_batched(
                 || {
-                    let mut rng = SmallRng::from_os_rng();
+                    let mut rng = small_rng();
 
                     let mut table = HopHashTable::<TestItem>::with_capacity(0);
                     for (hash, item) in (0..hop_capacity).map(|_| {
@@ -997,7 +1000,7 @@ fn bench_drain<TestItem: KeyValuePair, const MAX_SIZE: usize>(c: &mut Criterion)
         group.bench_function(BenchmarkId::new("hashbrown", size), |b| {
             b.iter_batched(
                 || {
-                    let mut rng = SmallRng::from_os_rng();
+                    let mut rng = small_rng();
                     let mut table = HashbrownHashTable::<TestItem>::with_capacity(0);
                     for (hash, item) in (0..hashbrown_capacity).map(|_| {
                         let key = rng.random();
@@ -1075,11 +1078,11 @@ fn bench_mixed_workload<TestItem: KeyValuePair, const MAX_SIZE: usize>(c: &mut C
             b.iter_batched(
                 || {
                     let mut initial_hash_and_item = initial_hash_and_item.clone();
-                    initial_hash_and_item.shuffle(&mut SmallRng::from_os_rng());
+                    initial_hash_and_item.shuffle(&mut small_rng());
                     let mut remove_hash_and_key = remove_hash_and_key.clone();
-                    remove_hash_and_key.shuffle(&mut SmallRng::from_os_rng());
+                    remove_hash_and_key.shuffle(&mut small_rng());
                     let mut final_hash_and_item = final_hash_and_item.clone();
-                    final_hash_and_item.shuffle(&mut SmallRng::from_os_rng());
+                    final_hash_and_item.shuffle(&mut small_rng());
                     (
                         initial_hash_and_item,
                         remove_hash_and_key,
@@ -1128,11 +1131,11 @@ fn bench_mixed_workload<TestItem: KeyValuePair, const MAX_SIZE: usize>(c: &mut C
             b.iter_batched(
                 || {
                     let mut initial_hash_and_item = initial_hash_and_item.clone();
-                    initial_hash_and_item.shuffle(&mut SmallRng::from_os_rng());
+                    initial_hash_and_item.shuffle(&mut small_rng());
                     let mut remove_hash_and_key = remove_hash_and_key.clone();
-                    remove_hash_and_key.shuffle(&mut SmallRng::from_os_rng());
+                    remove_hash_and_key.shuffle(&mut small_rng());
                     let mut final_hash_and_item = final_hash_and_item.clone();
-                    final_hash_and_item.shuffle(&mut SmallRng::from_os_rng());
+                    final_hash_and_item.shuffle(&mut small_rng());
                     (
                         initial_hash_and_item,
                         remove_hash_and_key,
@@ -1217,7 +1220,7 @@ fn bench_mixed_probabilistic<TestItem: KeyValuePair, const MAX_SIZE: usize>(c: &
             })
             .collect::<Vec<(u64, TestItem)>>();
 
-        let mut rng = SmallRng::from_os_rng();
+        let mut rng = small_rng();
 
         let operations = (0..hop_capacity.max(hashbrown_capacity) * 3)
             .map(|_| {
@@ -1232,7 +1235,7 @@ fn bench_mixed_probabilistic<TestItem: KeyValuePair, const MAX_SIZE: usize>(c: &
             })
             .collect::<Vec<Operation>>();
 
-        let mut rng = SmallRng::from_os_rng();
+        let mut rng = small_rng();
         let insert_distr = Zipf::new(hop_capacity as f32 - 1.0, 1.0).unwrap();
         let find_remove_distr =
             Zipf::new(hop_capacity as f32 * KEY_SPACE_MULTIPLIER as f32 - 1.0, 1.0).unwrap();
@@ -1252,7 +1255,7 @@ fn bench_mixed_probabilistic<TestItem: KeyValuePair, const MAX_SIZE: usize>(c: &
                     }
 
                     let mut operations = operations.clone();
-                    operations.shuffle(&mut SmallRng::from_os_rng());
+                    operations.shuffle(&mut small_rng());
                     (table, operations)
                 },
                 |(mut table, operations)| {
@@ -1312,7 +1315,7 @@ fn bench_mixed_probabilistic<TestItem: KeyValuePair, const MAX_SIZE: usize>(c: &
                     }
 
                     let mut operations = operations.clone();
-                    operations.shuffle(&mut SmallRng::from_os_rng());
+                    operations.shuffle(&mut small_rng());
                     (table, operations)
                 },
                 |(mut table, operations)| {
@@ -1386,7 +1389,7 @@ fn bench_mixed_probabilistic_zipf<TestItem: KeyValuePair, const MAX_SIZE: usize>
                 })
                 .collect::<Vec<(u64, TestItem)>>();
 
-            let mut rng = SmallRng::from_os_rng();
+            let mut rng = small_rng();
 
             let op_distr = Zipf::new(3.0, exponent).unwrap();
 
@@ -1403,7 +1406,7 @@ fn bench_mixed_probabilistic_zipf<TestItem: KeyValuePair, const MAX_SIZE: usize>
                 })
                 .collect::<Vec<Operation>>();
 
-            let mut rng = SmallRng::from_os_rng();
+            let mut rng = small_rng();
             let insert_distr = Zipf::new(hop_capacity as f32 - 1.0, 1.0).unwrap();
             let find_remove_distr =
                 Zipf::new(hop_capacity as f32 * KEY_SPACE_MULTIPLIER as f32 - 1.0, 1.0).unwrap();
@@ -1423,7 +1426,7 @@ fn bench_mixed_probabilistic_zipf<TestItem: KeyValuePair, const MAX_SIZE: usize>
                         }
 
                         let mut operations = operations.clone();
-                        operations.shuffle(&mut SmallRng::from_os_rng());
+                        operations.shuffle(&mut small_rng());
                         (table, operations)
                     },
                     |(mut table, operations)| {
@@ -1484,7 +1487,7 @@ fn bench_mixed_probabilistic_zipf<TestItem: KeyValuePair, const MAX_SIZE: usize>
                         }
 
                         let mut operations = operations.clone();
-                        operations.shuffle(&mut SmallRng::from_os_rng());
+                        operations.shuffle(&mut small_rng());
                         (table, operations)
                     },
                     |(mut table, operations)| {
@@ -1550,7 +1553,7 @@ fn bench_churn_zipf<TestItem: KeyValuePair, const MAX_SIZE: usize>(c: &mut Crite
             .collect::<Vec<(u64, TestItem)>>();
 
         let zipf = Zipf::new((hop_capacity as f32 - 1.0).floor(), 1.3).unwrap();
-        let mut rng = SmallRng::from_os_rng();
+        let mut rng = small_rng();
 
         group.throughput(Throughput::Elements(hop_capacity as u64));
         group.bench_function(BenchmarkId::new("hop_hash", size), |b| {
@@ -1593,7 +1596,7 @@ fn bench_churn_zipf<TestItem: KeyValuePair, const MAX_SIZE: usize>(c: &mut Crite
         });
 
         let zipf = Zipf::new((hashbrown_capacity as f32 - 1.0).floor(), 1.3).unwrap();
-        let mut rng = SmallRng::from_os_rng();
+        let mut rng = small_rng();
 
         group.throughput(Throughput::Elements(hashbrown_capacity as u64));
         group.bench_function(BenchmarkId::new("hashbrown", size), |b| {
